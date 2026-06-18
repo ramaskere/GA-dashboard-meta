@@ -5,6 +5,9 @@ import Link from "next/link";
 import type { ClientConfig } from "@/lib/clients";
 import { clientCssVars } from "@/lib/format";
 import { AdminLoginGate } from "./AdminLoginGate";
+import { AppHeader } from "./AppHeader";
+import { WidgetEditor } from "./WidgetEditor";
+import type { WidgetConfig } from "@/lib/widgets";
 
 interface SettingsData {
   client: { id: string; name: string };
@@ -14,6 +17,7 @@ interface SettingsData {
     metaAccessTokenSet: boolean;
     metaAccessTokenHint: string | null;
     dashboardPasswordSet: boolean;
+    widgetConfig: WidgetConfig;
     updatedAt: string | null;
     source: "supabase" | "env" | "none";
     supabaseReady: boolean;
@@ -118,20 +122,7 @@ export function SettingsPage({ client }: SettingsPageProps) {
 
   return (
     <div className="min-h-screen" style={style}>
-      <header className="border-b border-gray-200/80 bg-white">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-4 sm:px-6">
-          <div>
-            <h1 className="text-lg font-semibold">Configuración API</h1>
-            <p className="text-xs text-gray-500">{client.name}</p>
-          </div>
-          <Link
-            href="/"
-            className="rounded-xl border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            ← Dashboard
-          </Link>
-        </div>
-      </header>
+      <AppHeader client={client} active="settings" />
 
       <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         {!s?.supabaseReady && (
@@ -230,6 +221,32 @@ export function SettingsPage({ client }: SettingsPageProps) {
             {saving ? "Guardando…" : "Guardar configuración"}
           </button>
         </form>
+
+        {s?.widgetConfig && (
+          <div className="mt-8">
+            <WidgetEditor
+              config={s.widgetConfig}
+              disabled={!s.supabaseReady}
+              onSave={async (widgetConfig) => {
+                const res = await fetch("/api/widgets", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ widgetConfig }),
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.error || "Error");
+                setData((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        settings: { ...prev.settings, widgetConfig: json.widgetConfig },
+                      }
+                    : prev
+                );
+              }}
+            />
+          </div>
+        )}
 
         <p className="mt-6 text-center text-xs text-gray-400">
           La contraseña de admin (<code>ADMIN_PASSWORD</code>) solo va en Vercel, no se guarda en la base.

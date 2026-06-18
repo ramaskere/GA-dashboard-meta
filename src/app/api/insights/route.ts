@@ -108,6 +108,7 @@ export async function GET(request: NextRequest) {
         status: accountInfo.account_status,
         timezone: accountInfo.timezone_name,
       },
+      widgetConfig: publicSettings.widgetConfig,
       preset,
       totals,
       daily: dailyChart,

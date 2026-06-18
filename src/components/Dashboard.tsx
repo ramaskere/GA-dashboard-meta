@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import type { ClientConfig } from "@/lib/clients";
 import {
@@ -10,10 +9,17 @@ import {
   formatPercent,
   clientCssVars,
 } from "@/lib/format";
+import {
+  enabledWidgets,
+  defaultWidgetConfig,
+  type WidgetConfig,
+  type WidgetId,
+} from "@/lib/widgets";
 import { KpiCard } from "./KpiCard";
 import { SpendChart, ClicksChart } from "./Charts";
 import { DataTable } from "./DataTable";
 import { LoginGate } from "./LoginGate";
+import { AppHeader } from "./AppHeader";
 
 type DatePreset =
   | "today"
@@ -27,6 +33,7 @@ type DatePreset =
 interface InsightsData {
   client: { id: string; name: string; currency: string };
   account: { name: string; status: number; timezone: string };
+  widgetConfig?: WidgetConfig;
   preset: string;
   totals: {
     spend: number;
@@ -67,8 +74,6 @@ interface InsightsData {
     cpc: number;
   }>;
   updatedAt: string;
-  error?: string;
-  hint?: string;
 }
 
 const PRESETS: { value: DatePreset; label: string }[] = [
@@ -97,7 +102,6 @@ export function Dashboard({ client }: DashboardProps) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     const res = await fetch(`/api/insights?preset=${preset}`);
 
     if (res.status === 401) {
@@ -125,19 +129,183 @@ export function Dashboard({ client }: DashboardProps) {
       setData(json);
       setNeedsAuth(false);
     }
-
     setLoading(false);
   }, [preset]);
 
   useEffect(() => {
-    if (!needsAuth || authenticated) {
-      fetchData();
-    }
+    if (!needsAuth || authenticated) fetchData();
   }, [fetchData, needsAuth, authenticated]);
 
   const style = clientCssVars(client);
   const currency = data?.client.currency || client.currency;
   const locale = client.locale;
+  const widgetConfig = data?.widgetConfig || defaultWidgetConfig();
+  const widgets = enabledWidgets(widgetConfig);
+
+  function renderWidget(id: WidgetId) {
+    if (!data && !loading) return null;
+
+    switch (id) {
+      case "kpi_spend":
+        return (
+          <KpiCard
+            key={id}
+            label="Gasto total"
+            value={
+              data
+                ? formatCurrency(data.totals.spend, currency, locale)
+                : loading
+                  ? "—"
+                  : "$0"
+            }
+          />
+        );
+      case "kpi_impressions":
+        return (
+          <KpiCard
+            key={id}
+            label="Impresiones"
+            value={data ? formatNumber(data.totals.impressions, locale) : "—"}
+          />
+        );
+      case "kpi_clicks":
+        return (
+          <KpiCard
+            key={id}
+            label="Clics"
+            value={data ? formatNumber(data.totals.clicks, locale) : "—"}
+            sub={data ? `CTR ${formatPercent(data.totals.ctr)}` : undefined}
+          />
+        );
+      case "kpi_reach":
+        return (
+          <KpiCard
+            key={id}
+            label="Alcance"
+            value={data ? formatNumber(data.totals.reach, locale) : "—"}
+            sub={
+              data
+                ? `CPC ${formatCurrency(data.totals.cpc, currency, locale)}`
+                : undefined
+            }
+          />
+        );
+      case "kpi_cpm":
+        return (
+          <KpiCard
+            key={id}
+            label="CPM"
+            value={data ? formatCurrency(data.totals.cpm, currency, locale) : "—"}
+          />
+        );
+      case "kpi_messages":
+        return (
+          <KpiCard
+            key={id}
+            label="Mensajes"
+            value={data ? formatNumber(data.totals.messages, locale) : "—"}
+          />
+        );
+      case "kpi_leads":
+        return (
+          <KpiCard
+            key={id}
+            label="Leads"
+            value={data ? formatNumber(data.totals.leads, locale) : "—"}
+          />
+        );
+      case "kpi_purchases":
+        return (
+          <KpiCard
+            key={id}
+            label="Compras"
+            value={data ? formatNumber(data.totals.purchases, locale) : "—"}
+          />
+        );
+      case "chart_spend":
+        return (
+          <div
+            key={id}
+            className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm lg:col-span-1"
+          >
+            <h3 className="mb-4 text-sm font-semibold">Gasto diario</h3>
+            {loading ? (
+              <div className="flex h-64 items-center justify-center text-sm text-gray-400">
+                Cargando…
+              </div>
+            ) : data ? (
+              <SpendChart data={data.daily} currency={currency} locale={locale} />
+            ) : null}
+          </div>
+        );
+      case "chart_clicks":
+        return (
+          <div
+            key={id}
+            className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm lg:col-span-1"
+          >
+            <h3 className="mb-4 text-sm font-semibold">Clics por día</h3>
+            {loading ? (
+              <div className="flex h-64 items-center justify-center text-sm text-gray-400">
+                Cargando…
+              </div>
+            ) : data ? (
+              <ClicksChart data={data.daily} locale={locale} />
+            ) : null}
+          </div>
+        );
+      case "table_campaigns":
+        return data ? (
+          <DataTable
+            key={id}
+            title="Campañas"
+            columns={[
+              { key: "name", label: "Campaña" },
+              { key: "spend", label: "Gasto", align: "right" },
+              { key: "impressions", label: "Impresiones", align: "right" },
+              { key: "clicks", label: "Clics", align: "right" },
+              { key: "ctr", label: "CTR", align: "right" },
+              { key: "cpc", label: "CPC", align: "right" },
+            ]}
+            rows={data.campaigns.map((c) => ({
+              name: c.name,
+              spend: formatCurrency(c.spend, currency, locale),
+              impressions: formatNumber(c.impressions, locale),
+              clicks: formatNumber(c.clicks, locale),
+              ctr: formatPercent(c.ctr),
+              cpc: formatCurrency(c.cpc, currency, locale),
+            }))}
+          />
+        ) : null;
+      case "table_adsets":
+        return data ? (
+          <DataTable
+            key={id}
+            title="Conjuntos de anuncios"
+            columns={[
+              { key: "name", label: "Ad Set" },
+              { key: "campaign", label: "Campaña" },
+              { key: "spend", label: "Gasto", align: "right" },
+              { key: "clicks", label: "Clics", align: "right" },
+              { key: "ctr", label: "CTR", align: "right" },
+            ]}
+            rows={data.adSets.map((a) => ({
+              name: a.name,
+              campaign: a.campaign,
+              spend: formatCurrency(a.spend, currency, locale),
+              clicks: formatNumber(a.clicks, locale),
+              ctr: formatPercent(a.ctr),
+            }))}
+          />
+        ) : null;
+      default:
+        return null;
+    }
+  }
+
+  const kpiWidgets = widgets.filter((w) => w.id.startsWith("kpi_"));
+  const chartWidgets = widgets.filter((w) => w.id.startsWith("chart_"));
+  const tableWidgets = widgets.filter((w) => w.id.startsWith("table_"));
 
   if (needsAuth && !authenticated) {
     return (
@@ -149,53 +317,26 @@ export function Dashboard({ client }: DashboardProps) {
 
   return (
     <div className="min-h-screen" style={style}>
-      <header className="border-b border-gray-200/80 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <Image
-              src={client.logo}
-              alt={client.name}
-              width={40}
-              height={40}
-              className="rounded-xl"
-            />
-            <div>
-              <h1 className="text-lg font-semibold">{client.name}</h1>
-              <p className="text-xs text-gray-500">{client.tagline}</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <select
-              value={preset}
-              onChange={(e) => setPreset(e.target.value as DatePreset)}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[var(--client-primary)]"
-            >
-              {PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-
-            <button
-              onClick={fetchData}
-              disabled={loading}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-            >
-              {loading ? "…" : "↻"}
-            </button>
-
-            <Link
-              href="/settings"
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm hover:bg-gray-50"
-              title="Configurar API"
-            >
-              ⚙
-            </Link>
-          </div>
-        </div>
-      </header>
+      <AppHeader client={client} active="dashboard">
+        <select
+          value={preset}
+          onChange={(e) => setPreset(e.target.value as DatePreset)}
+          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[var(--client-primary)]"
+        >
+          {PRESETS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={fetchData}
+          disabled={loading}
+          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+        >
+          {loading ? "…" : "↻"}
+        </button>
+      </AppHeader>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {needsSetup && (
@@ -214,13 +355,6 @@ export function Dashboard({ client }: DashboardProps) {
         {error && !needsSetup && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <p className="font-medium">{error}</p>
-            <p className="mt-1 text-red-600">
-              Revisá la configuración en{" "}
-              <Link href="/settings" className="underline">
-                /settings
-              </Link>
-              . El token necesita permiso <code className="text-xs">ads_read</code>.
-            </p>
           </div>
         )}
 
@@ -235,115 +369,21 @@ export function Dashboard({ client }: DashboardProps) {
           </p>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard
-            label="Gasto total"
-            value={
-              data
-                ? formatCurrency(data.totals.spend, currency, locale)
-                : loading
-                  ? "—"
-                  : "$0"
-            }
-          />
-          <KpiCard
-            label="Impresiones"
-            value={data ? formatNumber(data.totals.impressions, locale) : "—"}
-          />
-          <KpiCard
-            label="Clics"
-            value={data ? formatNumber(data.totals.clicks, locale) : "—"}
-            sub={data ? `CTR ${formatPercent(data.totals.ctr)}` : undefined}
-          />
-          <KpiCard
-            label="Alcance"
-            value={data ? formatNumber(data.totals.reach, locale) : "—"}
-            sub={data ? `CPC ${formatCurrency(data.totals.cpc, currency, locale)}` : undefined}
-          />
-        </div>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard
-            label="CPM"
-            value={data ? formatCurrency(data.totals.cpm, currency, locale) : "—"}
-          />
-          <KpiCard
-            label="Mensajes"
-            value={data ? formatNumber(data.totals.messages, locale) : "—"}
-          />
-          <KpiCard
-            label="Leads"
-            value={data ? formatNumber(data.totals.leads, locale) : "—"}
-          />
-          <KpiCard
-            label="Compras"
-            value={data ? formatNumber(data.totals.purchases, locale) : "—"}
-          />
-        </div>
-
-        <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-4 text-sm font-semibold">Gasto diario</h3>
-            {loading ? (
-              <div className="flex h-64 items-center justify-center text-sm text-gray-400">
-                Cargando…
-              </div>
-            ) : data ? (
-              <SpendChart data={data.daily} currency={currency} locale={locale} />
-            ) : null}
+        {kpiWidgets.length > 0 && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {kpiWidgets.map((w) => renderWidget(w.id))}
           </div>
+        )}
 
-          <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-4 text-sm font-semibold">Clics por día</h3>
-            {loading ? (
-              <div className="flex h-64 items-center justify-center text-sm text-gray-400">
-                Cargando…
-              </div>
-            ) : data ? (
-              <ClicksChart data={data.daily} locale={locale} />
-            ) : null}
+        {chartWidgets.length > 0 && (
+          <div className="mt-8 grid gap-6 lg:grid-cols-2">
+            {chartWidgets.map((w) => renderWidget(w.id))}
           </div>
-        </div>
+        )}
 
-        {data && (
+        {tableWidgets.length > 0 && data && (
           <div className="mt-8 space-y-6">
-            <DataTable
-              title="Campañas"
-              columns={[
-                { key: "name", label: "Campaña" },
-                { key: "spend", label: "Gasto", align: "right" },
-                { key: "impressions", label: "Impresiones", align: "right" },
-                { key: "clicks", label: "Clics", align: "right" },
-                { key: "ctr", label: "CTR", align: "right" },
-                { key: "cpc", label: "CPC", align: "right" },
-              ]}
-              rows={data.campaigns.map((c) => ({
-                name: c.name,
-                spend: formatCurrency(c.spend, currency, locale),
-                impressions: formatNumber(c.impressions, locale),
-                clicks: formatNumber(c.clicks, locale),
-                ctr: formatPercent(c.ctr),
-                cpc: formatCurrency(c.cpc, currency, locale),
-              }))}
-            />
-
-            <DataTable
-              title="Conjuntos de anuncios"
-              columns={[
-                { key: "name", label: "Ad Set" },
-                { key: "campaign", label: "Campaña" },
-                { key: "spend", label: "Gasto", align: "right" },
-                { key: "clicks", label: "Clics", align: "right" },
-                { key: "ctr", label: "CTR", align: "right" },
-              ]}
-              rows={data.adSets.map((a) => ({
-                name: a.name,
-                campaign: a.campaign,
-                spend: formatCurrency(a.spend, currency, locale),
-                clicks: formatNumber(a.clicks, locale),
-                ctr: formatPercent(a.ctr),
-              }))}
-            />
+            {tableWidgets.map((w) => renderWidget(w.id))}
           </div>
         )}
       </main>

@@ -1,11 +1,17 @@
 import { getClientId } from "./clients";
 import { getSupabaseAdmin } from "./supabase";
+import {
+  defaultWidgetConfig,
+  normalizeWidgetConfig,
+  type WidgetConfig,
+} from "./widgets";
 
 export interface DashboardSettings {
   clientSlug: string;
   metaAccessToken: string;
   metaAdAccountId: string;
   dashboardPassword: string | null;
+  widgetConfig: WidgetConfig;
   updatedAt: string | null;
   source: "supabase" | "env";
 }
@@ -16,6 +22,7 @@ export interface DashboardSettingsPublic {
   metaAccessTokenSet: boolean;
   metaAccessTokenHint: string | null;
   dashboardPasswordSet: boolean;
+  widgetConfig: WidgetConfig;
   updatedAt: string | null;
   source: "supabase" | "env" | "none";
   supabaseReady: boolean;
@@ -37,6 +44,7 @@ function rowToSettings(row: {
   meta_access_token: string;
   meta_ad_account_id: string;
   dashboard_password: string | null;
+  widget_config?: unknown;
   updated_at: string | null;
 }): DashboardSettings {
   return {
@@ -44,6 +52,7 @@ function rowToSettings(row: {
     metaAccessToken: row.meta_access_token || "",
     metaAdAccountId: row.meta_ad_account_id || "",
     dashboardPassword: row.dashboard_password || null,
+    widgetConfig: normalizeWidgetConfig(row.widget_config),
     updatedAt: row.updated_at || null,
     source: "supabase",
   };
@@ -76,6 +85,7 @@ export async function getSettings(
       metaAccessToken: envToken,
       metaAdAccountId: envAccount,
       dashboardPassword: envPassword,
+      widgetConfig: defaultWidgetConfig(),
       updatedAt: null,
       source: "env",
     };
@@ -97,6 +107,7 @@ export async function getPublicSettings(
       metaAccessTokenSet: false,
       metaAccessTokenHint: null,
       dashboardPasswordSet: false,
+      widgetConfig: defaultWidgetConfig(),
       updatedAt: null,
       source: "none",
       supabaseReady,
@@ -112,6 +123,7 @@ export async function getPublicSettings(
     metaAccessTokenSet: hasToken,
     metaAccessTokenHint: tokenHint(settings.metaAccessToken),
     dashboardPasswordSet: Boolean(settings.dashboardPassword),
+    widgetConfig: settings.widgetConfig,
     updatedAt: settings.updatedAt,
     source: settings.source,
     supabaseReady,
@@ -124,6 +136,7 @@ export async function saveSettings(
     metaAccessToken?: string;
     metaAdAccountId?: string;
     dashboardPassword?: string | null;
+    widgetConfig?: WidgetConfig;
   }
 ): Promise<void> {
   const supabase = getSupabaseAdmin();
@@ -149,12 +162,17 @@ export async function saveSettings(
     dashboardPassword = pwd || null;
   }
 
+  const widgetConfig = input.widgetConfig
+    ? normalizeWidgetConfig(input.widgetConfig)
+    : existing?.widgetConfig || defaultWidgetConfig();
+
   const { error } = await supabase.from("dashboard_settings").upsert(
     {
       client_slug: clientSlug,
       meta_access_token: token,
       meta_ad_account_id: accountId,
       dashboard_password: dashboardPassword,
+      widget_config: widgetConfig,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "client_slug" }
@@ -184,6 +202,18 @@ export async function getMetaCredentials() {
     token,
     adAccountId: normalizeAdAccountId(adAccountId),
   };
+}
+
+export async function getWidgetConfig(clientSlug?: string): Promise<WidgetConfig> {
+  const settings = await getSettings(clientSlug);
+  return settings?.widgetConfig || defaultWidgetConfig();
+}
+
+export async function saveWidgetConfig(
+  clientSlug: string,
+  widgetConfig: WidgetConfig
+): Promise<void> {
+  await saveSettings(clientSlug, { widgetConfig });
 }
 
 export async function getDashboardPassword(): Promise<string | null> {
