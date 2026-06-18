@@ -1,78 +1,67 @@
 # Meta Ads Dashboard
 
-Dashboard replicable de reportes de Meta Ads para tus clientes. **Go Apple** es el ejemplo incluido.
+Dashboard replicable de reportes de Meta Ads. **Go Apple** es el ejemplo incluido.
 
-## Replicar para un nuevo cliente (3 pasos)
+## ¿Necesito Supabase?
 
-1. **Copiá la config del cliente**
-   ```bash
-   cp clients/go-apple.json clients/mi-cliente.json
-   ```
-   Editá nombre, colores, logo en `public/clients/mi-cliente/`.
+| Qué querés | ¿Supabase? |
+|------------|------------|
+| Configurar token y Ad Account **desde la web** (`/settings`) | **Sí** |
+| Solo variables de entorno en Vercel | No (opcional) |
 
-2. **Registrá el cliente** en `src/lib/clients.ts`:
-   ```ts
-   import miCliente from "../../clients/mi-cliente.json";
-   // ...
-   "mi-cliente": miCliente as ClientConfig,
-   ```
+Un solo proyecto Supabase puede guardar la config de **todos tus clientes** (una fila por `client_slug`).
 
-3. **Variables de entorno** (local o Vercel):
-   ```env
-   CLIENT_ID=mi-cliente
-   META_ACCESS_TOKEN=tu_token_de_meta
-   META_AD_ACCOUNT_ID=act_123456789
-   DASHBOARD_PASSWORD=opcional_para_proteger
-   ```
+## Setup rápido
+
+### 1. Supabase
+
+1. Creá un proyecto en [supabase.com](https://supabase.com)
+2. **SQL Editor** → ejecutá `supabase/schema.sql`
+3. Copiá de **Project Settings → API**:
+   - `SUPABASE_URL`
+   - `service_role` key (secreta, solo servidor)
+
+### 2. Vercel — variables de entorno
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `CLIENT_ID` | Sí | `go-apple` |
+| `SUPABASE_URL` | Para /settings | URL del proyecto |
+| `SUPABASE_SERVICE_ROLE_KEY` | Para /settings | Service role key |
+| `ADMIN_PASSWORD` | Sí | Contraseña para entrar a `/settings` |
+| `META_ACCESS_TOKEN` | Opcional | Fallback si no usás la web |
+| `META_AD_ACCOUNT_ID` | Opcional | Fallback si no usás la web |
+| `DASHBOARD_PASSWORD` | Opcional | Proteger vista del cliente |
+
+### 3. Configurar Meta desde la web
+
+1. Abrí `https://tu-app.vercel.app/settings`
+2. Ingresá `ADMIN_PASSWORD`
+3. Pegá el **token de Meta** y el **Ad Account ID**
+4. Guardá → el dashboard en `/` ya muestra los datos
+
+## Replicar para otro cliente
+
+1. Copiá `clients/go-apple.json` → `clients/nuevo-cliente.json`
+2. Registrá en `src/lib/clients.ts`
+3. Nuevo deploy en Vercel con `CLIENT_ID=nuevo-cliente`
+4. Misma Supabase: se crea sola la fila al guardar en `/settings`
 
 ## Desarrollo local
 
 ```bash
-cd DASHBOARD
 npm install
 cp .env.example .env.local
-# Editá .env.local con tu token y ad account
 npm run dev
 ```
-
-Abrí [http://localhost:3000](http://localhost:3000).
-
-## Deploy en Vercel
-
-1. Subí el repo a GitHub (o conectá la carpeta `DASHBOARD`).
-2. En [vercel.com](https://vercel.com) → **New Project** → importá el repo.
-3. **Root Directory**: `DASHBOARD` (si el repo es el monorepo GO APPLE).
-4. En **Environment Variables** agregá:
-   - `META_ACCESS_TOKEN`
-   - `META_AD_ACCOUNT_ID`
-   - `CLIENT_ID` → `go-apple`
-   - `DASHBOARD_PASSWORD` (opcional)
-5. Deploy.
-
-Para otro cliente: nuevo proyecto en Vercel con otro `CLIENT_ID` y credenciales Meta, o duplicá el proyecto y cambiá solo las env vars.
-
-## Token de Meta
-
-Necesitás un **System User Token** o **Long-Lived User Token** con permisos:
-
-- `ads_read`
-- `read_insights`
-
-En [Meta Business Suite](https://business.facebook.com) → Configuración → Usuarios del sistema → Generar token.
-
-El **Ad Account ID** está en Administrador de anuncios → Configuración de la cuenta (formato `act_123456789`).
 
 ## Estructura
 
 ```
-DASHBOARD/
-├── clients/           # Config por cliente (branding)
-├── public/clients/    # Logos
-├── src/
-│   ├── app/api/       # API routes (token solo en servidor)
-│   ├── components/    # UI del dashboard
-│   └── lib/           # Meta API + helpers
-└── .env.example
+├── clients/              # Branding por cliente
+├── supabase/schema.sql   # Tabla dashboard_settings
+├── src/app/settings/     # Configuración web de la API
+└── src/app/api/          # Meta API (token solo en servidor)
 ```
 
-El token **nunca** va al navegador: solo se usa en `/api/insights` en el servidor.
+Repo: [github.com/ramaskere/GA-dashboard-meta](https://github.com/ramaskere/GA-dashboard-meta)

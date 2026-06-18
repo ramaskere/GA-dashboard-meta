@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getClientConfig,
-  getMetaCredentials,
-  getDashboardPassword,
-} from "@/lib/clients";
+import { isDashboardAuthed } from "@/lib/auth";
+import { getClientConfig } from "@/lib/clients";
+import { getPublicSettings } from "@/lib/settings";
 import {
   fetchAccountInsights,
   fetchCampaignInsights,
@@ -14,6 +12,7 @@ import {
   parseNumber,
   type DatePreset,
 } from "@/lib/meta-api";
+import { getMetaCredentials } from "@/lib/settings";
 
 const VALID_PRESETS: DatePreset[] = [
   "today",
@@ -25,17 +24,8 @@ const VALID_PRESETS: DatePreset[] = [
   "last_month",
 ];
 
-function checkAuth(request: NextRequest): boolean {
-  const password = getDashboardPassword();
-  if (!password) return true;
-
-  const header = request.headers.get("x-dashboard-password");
-  const cookie = request.cookies.get("dashboard_auth")?.value;
-  return header === password || cookie === password;
-}
-
 export async function GET(request: NextRequest) {
-  if (!checkAuth(request)) {
+  if (!(await isDashboardAuthed(request))) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
@@ -48,7 +38,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const client = getClientConfig();
-    const { token, adAccountId } = getMetaCredentials();
+    const publicSettings = await getPublicSettings();
+
+    if (!publicSettings.configured) {
+      return NextResponse.json(
+        {
+          error: "API de Meta no configurada",
+          hint: "Andá a /settings y cargá el token y el Ad Account ID.",
+          needsSetup: true,
+        },
+        { status: 503 }
+      );
+    }
+
+    const { token, adAccountId } = await getMetaCredentials();
 
     const [accountInfo, dailyInsights, campaignInsights, adSetInsights] =
       await Promise.all([
@@ -117,7 +120,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         error: message,
-        hint: "Verificá META_ACCESS_TOKEN, META_AD_ACCOUNT_ID y permisos ads_read en Meta.",
+        hint: "Verificá el token y el Ad Account ID en /settings. El token necesita permiso ads_read.",
       },
       { status: 500 }
     );

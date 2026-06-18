@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { ClientConfig } from "@/lib/clients";
 import {
   formatCurrency,
@@ -90,6 +91,7 @@ export function Dashboard({ client }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -106,10 +108,20 @@ export function Dashboard({ client }: DashboardProps) {
 
     const json = await res.json();
 
+    if (res.status === 503 && json.needsSetup) {
+      setNeedsSetup(true);
+      setError(json.error || "API no configurada");
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
     if (!res.ok) {
+      setNeedsSetup(false);
       setError(json.error || "Error al cargar datos");
       setData(null);
     } else {
+      setNeedsSetup(false);
       setData(json);
       setNeedsAuth(false);
     }
@@ -173,17 +185,41 @@ export function Dashboard({ client }: DashboardProps) {
             >
               {loading ? "…" : "↻"}
             </button>
+
+            <Link
+              href="/settings"
+              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm hover:bg-gray-50"
+              title="Configurar API"
+            >
+              ⚙
+            </Link>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        {error && (
+        {needsSetup && (
+          <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+            <p className="font-medium">Configurá la API de Meta para ver los reportes</p>
+            <p className="mt-1 text-blue-800">
+              Andá a{" "}
+              <Link href="/settings" className="font-medium underline">
+                Configuración
+              </Link>{" "}
+              y cargá el token y el Ad Account ID.
+            </p>
+          </div>
+        )}
+
+        {error && !needsSetup && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <p className="font-medium">{error}</p>
             <p className="mt-1 text-red-600">
-              Configurá las variables de entorno META_ACCESS_TOKEN y META_AD_ACCOUNT_ID.
-              Revisá que el token tenga permiso <code className="text-xs">ads_read</code>.
+              Revisá la configuración en{" "}
+              <Link href="/settings" className="underline">
+                /settings
+              </Link>
+              . El token necesita permiso <code className="text-xs">ads_read</code>.
             </p>
           </div>
         )}

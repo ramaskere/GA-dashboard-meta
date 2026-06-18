@@ -32,26 +32,3 @@ export function getClientConfig(clientId?: string): ClientConfig {
 export function listClients(): ClientConfig[] {
   return Object.values(CLIENTS);
 }
-
-export function getMetaCredentials() {
-  const token = process.env.META_ACCESS_TOKEN;
-  const adAccountId = process.env.META_AD_ACCOUNT_ID;
-
-  if (!token) {
-    throw new Error("Falta META_ACCESS_TOKEN en variables de entorno");
-  }
-  if (!adAccountId) {
-    throw new Error("Falta META_AD_ACCOUNT_ID en variables de entorno");
-  }
-
-  const accountId = adAccountId.startsWith("act_")
-    ? adAccountId
-    : `act_${adAccountId}`;
-
-  return { token, adAccountId: accountId };
-}
-
-export function getDashboardPassword(): string | null {
-  const pwd = process.env.DASHBOARD_PASSWORD?.trim();
-  return pwd || null;
-}

@@ -1,26 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDashboardPassword } from "@/lib/settings";
+import { getAdminPassword } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const password = await getDashboardPassword();
+  const password = getAdminPassword();
 
   if (!password) {
-    return NextResponse.json({ ok: true, protected: false });
+    return NextResponse.json({
+      ok: false,
+      error: "ADMIN_PASSWORD no configurada en el servidor",
+    }, { status: 503 });
   }
 
   const body = await request.json().catch(() => ({}));
   const submitted = String(body.password || "");
 
   if (submitted !== password) {
-    return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 401 });
+    return NextResponse.json({ error: "Contraseña de admin incorrecta" }, { status: 401 });
   }
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("dashboard_auth", password, {
+  response.cookies.set("admin_auth", password, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: 60 * 60 * 24 * 7,
     path: "/",
   });
 
@@ -29,6 +32,6 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE() {
   const response = NextResponse.json({ ok: true });
-  response.cookies.delete("dashboard_auth");
+  response.cookies.delete("admin_auth");
   return response;
 }
