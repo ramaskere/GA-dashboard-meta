@@ -9,6 +9,7 @@ import {
   createAdSet,
   getAdAccountPages,
   CAMPAIGN_OBJECTIVES,
+  SUGGESTED_MIN_DAILY_BUDGET_ARS,
 } from "@/lib/meta-manage";
 
 export async function GET() {
@@ -35,6 +36,7 @@ export async function GET() {
       ads,
       pages,
       objectives: CAMPAIGN_OBJECTIVES,
+      suggestedMinDailyBudgetArs: SUGGESTED_MIN_DAILY_BUDGET_ARS,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";
@@ -56,31 +58,85 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { token, adAccountId } = await getMetaCredentials();
+    const action = String(body.action || "");
 
-    if (body.action === "create_campaign") {
+    if (action === "create_campaign") {
+      const name = String(body.name || "").trim();
+      if (!name) {
+        return NextResponse.json({ error: "Nombre requerido" }, { status: 400 });
+      }
+
       const campaign = await createCampaign(adAccountId, token, {
-        name: String(body.name || "").trim(),
+        name,
         objective: String(body.objective || "OUTCOME_TRAFFIC"),
-        dailyBudget: body.dailyBudget ? Number(body.dailyBudget) : undefined,
         status: "PAUSED",
       });
-
-      let adSetId: string | null = null;
-      if (body.createAdSet && body.dailyBudget) {
-        const adSet = await createAdSet(adAccountId, token, {
-          name: `${body.name} — Ad Set`,
-          campaignId: campaign.id,
-          dailyBudget: Number(body.dailyBudget),
-          pageId: body.pageId ? String(body.pageId) : undefined,
-        });
-        adSetId = adSet.id;
-      }
 
       return NextResponse.json({
         ok: true,
         campaignId: campaign.id,
-        adSetId,
-        message: "Campaña creada en pausa. Revisala en Meta Ads Manager.",
+        message: `Campaña "${name}" creada en pausa.`,
+      });
+    }
+
+    if (action === "create_adset") {
+      const name = String(body.name || "").trim();
+      const campaignId = String(body.campaignId || "").trim();
+      const dailyBudget = Number(body.dailyBudget);
+
+      if (!name || !campaignId) {
+        return NextResponse.json(
+          { error: "Nombre y campaña requeridos" },
+          { status: 400 }
+        );
+      }
+
+      const adSet = await createAdSet(adAccountId, token, {
+        name,
+        campaignId,
+        dailyBudget,
+        pageId: body.pageId ? String(body.pageId) : undefined,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        adSetId: adSet.id,
+        message: `Ad set "${name}" creado en pausa.`,
+      });
+    }
+
+    if (action === "create_full") {
+      const campName = String(body.campaignName || "").trim();
+      const adSetName = String(body.adSetName || "").trim();
+      const objective = String(body.objective || "OUTCOME_TRAFFIC");
+      const dailyBudget = Number(body.dailyBudget);
+
+      if (!campName || !adSetName || !dailyBudget) {
+        return NextResponse.json(
+          { error: "Completá nombre de campaña, ad set y presupuesto" },
+          { status: 400 }
+        );
+      }
+
+      const campaign = await createCampaign(adAccountId, token, {
+        name: campName,
+        objective,
+        status: "PAUSED",
+      });
+
+      const adSet = await createAdSet(adAccountId, token, {
+        name: adSetName,
+        campaignId: campaign.id,
+        dailyBudget,
+        pageId: body.pageId ? String(body.pageId) : undefined,
+        objective,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        campaignId: campaign.id,
+        adSetId: adSet.id,
+        message: "Campaña y ad set creados en pausa. Ahora subí el anuncio.",
       });
     }
 

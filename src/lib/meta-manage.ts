@@ -26,6 +26,21 @@ export interface MetaAd {
   campaign_id?: string;
 }
 
+interface MetaErrorBody {
+  error?: {
+    message?: string;
+    error_user_msg?: string;
+    error_user_title?: string;
+    code?: number;
+  };
+}
+
+function metaErrorMessage(data: MetaErrorBody): string {
+  const e = data.error;
+  if (!e) return "Error de Meta API";
+  return e.error_user_msg || e.message || "Error de Meta API";
+}
+
 async function metaGet<T>(
   path: string,
   token: string,
@@ -40,7 +55,7 @@ async function metaGet<T>(
   const res = await fetch(url.toString(), { cache: "no-store" });
   const data = await res.json();
   if (!res.ok || data.error) {
-    throw new Error(data.error?.message || `Meta API error ${res.status}`);
+    throw new Error(metaErrorMessage(data));
   }
   return data as T;
 }
@@ -65,9 +80,73 @@ async function metaPostForm<T>(
 
   const data = await res.json();
   if (!res.ok || data.error) {
-    throw new Error(data.error?.message || `Meta API error ${res.status}`);
+    throw new Error(metaErrorMessage(data));
   }
   return data as T;
+}
+
+/** Meta recibe presupuesto en centavos (centavos de ARS si la cuenta es ARS). */
+export function toMetaBudget(amount: number): string {
+  return String(Math.round(amount * 100));
+}
+
+export function adSetConfigForObjective(
+  objective: string,
+  pageId?: string
+): Record<string, string> {
+  const base: Record<string, string> = {
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    status: "PAUSED",
+  };
+
+  switch (objective) {
+    case "OUTCOME_LEADS":
+      return {
+        ...base,
+        optimization_goal: "LEAD_GENERATION",
+        billing_event: "IMPRESSIONS",
+        destination_type: "ON_AD",
+        ...(pageId
+          ? { promoted_object: JSON.stringify({ page_id: pageId }) }
+          : {}),
+      };
+    case "OUTCOME_SALES":
+      return {
+        ...base,
+        optimization_goal: "OFFSITE_CONVERSIONS",
+        billing_event: "IMPRESSIONS",
+      };
+    case "OUTCOME_ENGAGEMENT":
+      return {
+        ...base,
+        optimization_goal: "POST_ENGAGEMENT",
+        billing_event: "IMPRESSIONS",
+        ...(pageId
+          ? { promoted_object: JSON.stringify({ page_id: pageId }) }
+          : {}),
+      };
+    case "OUTCOME_AWARENESS":
+      return {
+        ...base,
+        optimization_goal: "REACH",
+        billing_event: "IMPRESSIONS",
+      };
+    case "OUTCOME_TRAFFIC":
+    default:
+      return {
+        ...base,
+        optimization_goal: "LINK_CLICKS",
+        billing_event: "IMPRESSIONS",
+      };
+  }
+}
+
+export async function getCampaign(campaignId: string, token: string) {
+  return metaGet<{ id: string; name: string; objective: string }>(
+    `/${campaignId}`,
+    token,
+    { fields: "id,name,objective" }
+  );
 }
 
 export async function listCampaigns(adAccountId: string, token: string) {
@@ -106,29 +185,23 @@ export async function listAds(adAccountId: string, token: string) {
   return res.data || [];
 }
 
+/** Solo campaña — sin presupuesto (el presupuesto va en el ad set). */
 export async function createCampaign(
   adAccountId: string,
   token: string,
   input: {
     name: string;
     objective: string;
-    dailyBudget?: number;
     status?: "PAUSED" | "ACTIVE";
   }
 ) {
-  const fields: Record<string, string> = {
+  return metaPostForm<{ id: string }>(`/${adAccountId}/campaigns`, token, {
     name: input.name,
     objective: input.objective,
     status: input.status || "PAUSED",
     special_ad_categories: "[]",
     is_adset_budget_sharing_enabled: "false",
-  };
-
-  if (input.dailyBudget && input.dailyBudget > 0) {
-    fields.daily_budget = String(Math.round(input.dailyBudget * 100));
-  }
-
-  return metaPostForm<{ id: string }>(`/${adAccountId}/campaigns`, token, fields);
+  });
 }
 
 export async function createAdSet(
@@ -139,29 +212,37 @@ export async function createAdSet(
     campaignId: string;
     dailyBudget: number;
     pageId?: string;
+    objective?: string;
   }
 ) {
+  if (!input.dailyBudget || input.dailyBudget <= 0) {
+    throw new Error("El ad set necesita un presupuesto diario en ARS");
+  }
+
+  let objective = input.objective;
+  if (!objective) {
+    const campaign = await getCampaign(input.campaignId, token);
+    objective = campaign.objective;
+  }
+
   const targeting = JSON.stringify({
     geo_locations: { countries: ["AR"] },
     age_min: 18,
   });
 
-  const fields: Record<string, string> = {
-    name: input.name,
-    campaign_id: input.campaignId,
-    daily_budget: String(Math.round(input.dailyBudget * 100)),
-    billing_event: "IMPRESSIONS",
-    optimization_goal: "LINK_CLICKS",
-    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-    status: "PAUSED",
-    targeting,
-  };
+  const objectiveConfig = adSetConfigForObjective(objective, input.pageId);
 
-  if (input.pageId) {
-    fields.promoted_object = JSON.stringify({ page_id: input.pageId });
+  if (objective === "OUTCOME_LEADS" && !input.pageId) {
+    throw new Error("Para campañas de Leads necesitás elegir la página de Facebook");
   }
 
-  return metaPostForm<{ id: string }>(`/${adAccountId}/adsets`, token, fields);
+  return metaPostForm<{ id: string }>(`/${adAccountId}/adsets`, token, {
+    name: input.name,
+    campaign_id: input.campaignId,
+    daily_budget: toMetaBudget(input.dailyBudget),
+    targeting,
+    ...objectiveConfig,
+  });
 }
 
 export async function uploadAdImage(
@@ -242,3 +323,6 @@ export const CAMPAIGN_OBJECTIVES = [
   { value: "OUTCOME_SALES", label: "Ventas" },
   { value: "OUTCOME_AWARENESS", label: "Reconocimiento" },
 ];
+
+/** Mínimo sugerido en ARS (Meta exige un piso; varía por cuenta). */
+export const SUGGESTED_MIN_DAILY_BUDGET_ARS = 3000;
