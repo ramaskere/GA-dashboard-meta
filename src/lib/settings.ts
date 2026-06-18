@@ -137,7 +137,7 @@ export async function saveSettings(
   const keepToken = input.metaAccessToken === undefined;
   const token = keepToken
     ? existing?.metaAccessToken || ""
-    : input.metaAccessToken.trim();
+    : (input.metaAccessToken ?? "").trim();
 
   const accountId = normalizeAdAccountId(
     input.metaAdAccountId?.trim() || existing?.metaAdAccountId || ""
