@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/auth";
 import { getPublicSettings, getMetaCredentials } from "@/lib/settings";
+import { parseSegmentationFromBody } from "@/lib/adset-segmentation";
 import {
   listCampaigns,
   listAdSets,
@@ -8,6 +9,7 @@ import {
   createCampaign,
   createAdSet,
   getAdAccountPages,
+  listPixels,
   CAMPAIGN_OBJECTIVES,
   SUGGESTED_MIN_DAILY_BUDGET_ARS,
 } from "@/lib/meta-manage";
@@ -23,11 +25,12 @@ export async function GET() {
     }
 
     const { token, adAccountId } = await getMetaCredentials();
-    const [campaigns, adSets, ads, pages] = await Promise.all([
+    const [campaigns, adSets, ads, pages, pixels] = await Promise.all([
       listCampaigns(adAccountId, token),
       listAdSets(adAccountId, token),
       listAds(adAccountId, token),
       getAdAccountPages(adAccountId, token).catch(() => []),
+      listPixels(adAccountId, token).catch(() => []),
     ]);
 
     return NextResponse.json({
@@ -35,6 +38,7 @@ export async function GET() {
       adSets,
       ads,
       pages,
+      pixels,
       objectives: CAMPAIGN_OBJECTIVES,
       suggestedMinDailyBudgetArs: SUGGESTED_MIN_DAILY_BUDGET_ARS,
     });
@@ -59,6 +63,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { token, adAccountId } = await getMetaCredentials();
     const action = String(body.action || "");
+    const segmentation = parseSegmentationFromBody(body);
 
     if (action === "create_campaign") {
       const name = String(body.name || "").trim();
@@ -95,7 +100,7 @@ export async function POST(request: NextRequest) {
         name,
         campaignId,
         dailyBudget,
-        pageId: body.pageId ? String(body.pageId) : undefined,
+        segmentation,
       });
 
       return NextResponse.json({
@@ -128,8 +133,8 @@ export async function POST(request: NextRequest) {
         name: adSetName,
         campaignId: campaign.id,
         dailyBudget,
-        pageId: body.pageId ? String(body.pageId) : undefined,
         objective,
+        segmentation,
       });
 
       return NextResponse.json({

@@ -1,3 +1,5 @@
+import type { AdSetSegmentation } from "./adset-segmentation";
+
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
@@ -90,10 +92,7 @@ export function toMetaBudget(amount: number): string {
   return String(Math.round(amount * 100));
 }
 
-export function adSetConfigForObjective(
-  objective: string,
-  pageId?: string
-): Record<string, string> {
+export function adSetConfigForObjective(objective: string): Record<string, string> {
   const base: Record<string, string> = {
     bid_strategy: "LOWEST_COST_WITHOUT_CAP",
     status: "PAUSED",
@@ -106,9 +105,6 @@ export function adSetConfigForObjective(
         optimization_goal: "LEAD_GENERATION",
         billing_event: "IMPRESSIONS",
         destination_type: "ON_AD",
-        ...(pageId
-          ? { promoted_object: JSON.stringify({ page_id: pageId }) }
-          : {}),
       };
     case "OUTCOME_SALES":
       return {
@@ -121,9 +117,6 @@ export function adSetConfigForObjective(
         ...base,
         optimization_goal: "POST_ENGAGEMENT",
         billing_event: "IMPRESSIONS",
-        ...(pageId
-          ? { promoted_object: JSON.stringify({ page_id: pageId }) }
-          : {}),
       };
     case "OUTCOME_AWARENESS":
       return {
@@ -139,6 +132,76 @@ export function adSetConfigForObjective(
         billing_event: "IMPRESSIONS",
       };
   }
+}
+
+export function buildTargeting(seg: AdSetSegmentation): Record<string, unknown> {
+  const targeting: Record<string, unknown> = {
+    geo_locations: { countries: seg.countries.length ? seg.countries : ["AR"] },
+    age_min: Math.max(18, seg.ageMin),
+    age_max: Math.min(65, Math.max(seg.ageMin, seg.ageMax)),
+  };
+
+  if (seg.placement === "instagram_only") {
+    targeting.publisher_platforms = ["instagram"];
+    targeting.instagram_positions = [
+      "stream",
+      "story",
+      "reels",
+      "explore",
+      "profile_feed",
+    ];
+  } else if (seg.placement === "facebook_only") {
+    targeting.publisher_platforms = ["facebook"];
+    targeting.facebook_positions = [
+      "feed",
+      "story",
+      "marketplace",
+      "video_feeds",
+      "right_hand_column",
+    ];
+  } else if (seg.placement === "facebook_instagram") {
+    targeting.publisher_platforms = ["facebook", "instagram"];
+    targeting.facebook_positions = ["feed", "story", "marketplace", "video_feeds"];
+    targeting.instagram_positions = ["stream", "story", "reels", "explore"];
+  }
+
+  return targeting;
+}
+
+export function buildPromotedObjectFields(
+  objective: string,
+  seg: AdSetSegmentation
+): Record<string, string> {
+  if (objective === "OUTCOME_SALES") {
+    if (!seg.pixelId) {
+      throw new Error(
+        "Para campañas de Ventas elegí el Pixel y el evento de conversión"
+      );
+    }
+    return {
+      promoted_object: JSON.stringify({
+        pixel_id: seg.pixelId,
+        custom_event_type: seg.pixelEvent || "PURCHASE",
+      }),
+    };
+  }
+
+  if (objective === "OUTCOME_LEADS") {
+    if (!seg.pageId) {
+      throw new Error("Para Leads necesitás elegir la página de Facebook");
+    }
+    return {
+      promoted_object: JSON.stringify({ page_id: seg.pageId }),
+    };
+  }
+
+  if (objective === "OUTCOME_ENGAGEMENT" && seg.pageId) {
+    return {
+      promoted_object: JSON.stringify({ page_id: seg.pageId }),
+    };
+  }
+
+  return {};
 }
 
 export async function getCampaign(campaignId: string, token: string) {
@@ -211,8 +274,8 @@ export async function createAdSet(
     name: string;
     campaignId: string;
     dailyBudget: number;
-    pageId?: string;
     objective?: string;
+    segmentation: AdSetSegmentation;
   }
 ) {
   if (!input.dailyBudget || input.dailyBudget <= 0) {
@@ -225,16 +288,14 @@ export async function createAdSet(
     objective = campaign.objective;
   }
 
-  const targeting = JSON.stringify({
-    geo_locations: { countries: ["AR"] },
-    age_min: 18,
-  });
+  const seg: AdSetSegmentation = {
+    ...input.segmentation,
+    pageId: input.segmentation.pageId,
+  };
 
-  const objectiveConfig = adSetConfigForObjective(objective, input.pageId);
-
-  if (objective === "OUTCOME_LEADS" && !input.pageId) {
-    throw new Error("Para campañas de Leads necesitás elegir la página de Facebook");
-  }
+  const targeting = JSON.stringify(buildTargeting(seg));
+  const objectiveConfig = adSetConfigForObjective(objective);
+  const promotedFields = buildPromotedObjectFields(objective, seg);
 
   return metaPostForm<{ id: string }>(`/${adAccountId}/adsets`, token, {
     name: input.name,
@@ -242,6 +303,7 @@ export async function createAdSet(
     daily_budget: toMetaBudget(input.dailyBudget),
     targeting,
     ...objectiveConfig,
+    ...promotedFields,
   });
 }
 
@@ -304,6 +366,16 @@ export async function createAdWithImage(
     creative: JSON.stringify({ creative_id: creative.id }),
     status: "PAUSED",
   });
+}
+
+export async function listPixels(adAccountId: string, token: string) {
+  const res = await metaGet<{
+    data: Array<{ id: string; name: string }>;
+  }>(`/${adAccountId}/adspixels`, token, {
+    fields: "id,name",
+    limit: "50",
+  });
+  return res.data || [];
 }
 
 export async function getAdAccountPages(adAccountId: string, token: string) {

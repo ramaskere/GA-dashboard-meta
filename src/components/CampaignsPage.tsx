@@ -5,6 +5,11 @@ import type { ClientConfig } from "@/lib/clients";
 import { clientCssVars } from "@/lib/format";
 import { AppHeader } from "./AppHeader";
 import { AdminLoginGate } from "./AdminLoginGate";
+import { SegmentationFields } from "./SegmentationFields";
+import {
+  defaultSegmentation,
+  type AdSetSegmentation,
+} from "@/lib/adset-segmentation";
 
 type Tab = "campaign" | "adset" | "ad" | "wizard";
 
@@ -23,6 +28,7 @@ interface CampaignsData {
   }>;
   ads: Array<{ id: string; name: string; status: string; adset_id?: string }>;
   pages: Array<{ id: string; name: string }>;
+  pixels: Array<{ id: string; name: string }>;
   objectives: Array<{ value: string; label: string }>;
   suggestedMinDailyBudgetArs?: number;
 }
@@ -71,9 +77,31 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
   const [wizObjective, setWizObjective] = useState("OUTCOME_TRAFFIC");
   const [wizBudget, setWizBudget] = useState("5000");
   const [wizAdSetId, setWizAdSetId] = useState("");
+  const [segmentation, setSegmentation] = useState<AdSetSegmentation>(
+    defaultSegmentation()
+  );
+  const [wizSegmentation, setWizSegmentation] = useState<AdSetSegmentation>(
+    defaultSegmentation()
+  );
 
   const style = clientCssVars(client);
   const minBudget = data?.suggestedMinDailyBudgetArs ?? 3000;
+
+  const selectedCampaignObjective =
+    data?.campaigns.find((c) => c.id === adSetCampaignId)?.objective ||
+    "OUTCOME_TRAFFIC";
+
+  function segPayload(seg: AdSetSegmentation) {
+    return {
+      countries: seg.countries,
+      ageMin: seg.ageMin,
+      ageMax: seg.ageMax,
+      placement: seg.placement,
+      pixelId: seg.pixelId,
+      pixelEvent: seg.pixelEvent,
+      pageId: pageId || seg.pageId,
+    };
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +122,11 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       setPageId((p) => p || json.pages?.[0]?.id || "");
       setAdSetCampaignId((c) => c || json.campaigns?.[0]?.id || "");
       setAdSetId((a) => a || json.adSets?.[0]?.id || "");
+      const firstPixel = json.pixels?.[0]?.id;
+      if (firstPixel) {
+        setSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
+        setWizSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
+      }
     }
     setLoading(false);
     setChecking(false);
@@ -110,8 +143,11 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
     });
   }, []);
 
+  const [lastSuccess, setLastSuccess] = useState(false);
+
   async function postCampaign(body: Record<string, unknown>) {
     setMessage(null);
+    setLastSuccess(false);
     const res = await fetch("/api/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -123,6 +159,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       return null;
     }
     setMessage(json.message || "Listo");
+    setLastSuccess(true);
     await load();
     return json;
   }
@@ -148,7 +185,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       name: adSetName,
       campaignId: adSetCampaignId,
       dailyBudget: Number(adSetBudget),
-      pageId: pageId || undefined,
+      ...segPayload({ ...segmentation, pageId }),
     });
     if (result) {
       setAdSetName("");
@@ -165,7 +202,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       adSetName: wizAdSet,
       objective: wizObjective,
       dailyBudget: Number(wizBudget),
-      pageId: pageId || undefined,
+      ...segPayload({ ...wizSegmentation, pageId }),
     });
     if (result) {
       setWizAdSetId(result.adSetId);
@@ -276,32 +313,12 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
         {message && (
           <div
             className={`mb-4 rounded-2xl border p-4 text-sm ${
-              message.toLowerCase().includes("error") ||
-              message.includes("Invalid")
-                ? "border-red-200 bg-red-50 text-red-800"
-                : "border-green-200 bg-green-50 text-green-800"
+              lastSuccess
+                ? "border-green-200 bg-green-50 text-green-800"
+                : "border-red-200 bg-red-50 text-red-800"
             }`}
           >
             {message}
-          </div>
-        )}
-
-        {data?.pages && data.pages.length > 0 && (
-          <div className="mb-4">
-            <label className="text-xs font-medium text-gray-500">
-              Página de Facebook
-            </label>
-            <select
-              value={pageId}
-              onChange={(e) => setPageId(e.target.value)}
-              className={`mt-1 ${inputCls}`}
-            >
-              {data.pages.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
           </div>
         )}
 
@@ -385,6 +402,15 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 className={inputCls}
               />
               <BudgetHint />
+              <SegmentationFields
+                segmentation={segmentation}
+                onChange={setSegmentation}
+                objective={selectedCampaignObjective}
+                pages={data?.pages || []}
+                pixels={data?.pixels || []}
+                pageId={pageId}
+                onPageIdChange={setPageId}
+              />
             </div>
             <button
               type="submit"
@@ -406,6 +432,19 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
               Subí creativo a un ad set que ya exista.
             </p>
             <div className="mt-4 space-y-3">
+              {data?.pages && data.pages.length > 0 && (
+                <select
+                  value={pageId}
+                  onChange={(e) => setPageId(e.target.value)}
+                  className={inputCls}
+                >
+                  {data.pages.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      Página: {p.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <select
                 required
                 value={adSetId}
@@ -512,6 +551,15 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 className={inputCls}
               />
               <BudgetHint />
+              <SegmentationFields
+                segmentation={wizSegmentation}
+                onChange={setWizSegmentation}
+                objective={wizObjective}
+                pages={data?.pages || []}
+                pixels={data?.pixels || []}
+                pageId={pageId}
+                onPageIdChange={setPageId}
+              />
             </div>
             <button
               type="submit"
