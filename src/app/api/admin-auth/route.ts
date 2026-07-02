@@ -1,5 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminPassword } from "@/lib/auth";
+import { getAdminPassword, isAdminAuthed } from "@/lib/auth";
+
+export async function GET(request: NextRequest) {
+  if (!getAdminPassword()) {
+    return NextResponse.json(
+      { ok: false, error: "ADMIN_PASSWORD no configurada" },
+      { status: 503 }
+    );
+  }
+
+  if (!isAdminAuthed(request)) {
+    return NextResponse.json({ ok: false }, { status: 401 });
+  }
+
+  return NextResponse.json({ ok: true });
+}
 
 export async function POST(request: NextRequest) {
   const password = getAdminPassword();

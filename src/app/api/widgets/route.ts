@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/auth";
-import { getClientId } from "@/lib/clients";
+import {
+  getClientConfig,
+  resolveClientIdFromRequest,
+} from "@/lib/clients";
 import { getPublicSettings, saveWidgetConfig } from "@/lib/settings";
 import { normalizeWidgetConfig } from "@/lib/widgets";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const settings = await getPublicSettings();
+    const clientId = resolveClientIdFromRequest(request);
+    const settings = await getPublicSettings(clientId);
     return NextResponse.json({ widgetConfig: settings.widgetConfig });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";
@@ -21,8 +25,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
+    const clientId = resolveClientIdFromRequest(request);
     const widgetConfig = normalizeWidgetConfig(body.widgetConfig);
-    await saveWidgetConfig(getClientId(), widgetConfig);
+    await saveWidgetConfig(clientId, widgetConfig);
     return NextResponse.json({ ok: true, widgetConfig });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";

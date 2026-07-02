@@ -26,11 +26,26 @@ export async function POST(request: NextRequest) {
     const headline = String(form.get("headline") || "").trim();
     const linkUrl = String(form.get("linkUrl") || "").trim();
 
-    if (!adSetId || !pageId || !primaryText || !headline || !linkUrl) {
+    if (!adSetId) {
+      return NextResponse.json({ error: "Elegí un ad set" }, { status: 400 });
+    }
+    if (!pageId) {
       return NextResponse.json(
-        { error: "Completá ad set, página, textos y URL" },
+        {
+          error:
+            "Falta la página de Facebook. Elegila en el selector o pegá el Page ID.",
+        },
         { status: 400 }
       );
+    }
+    if (!primaryText || !headline) {
+      return NextResponse.json(
+        { error: "Completá el texto principal y el título" },
+        { status: 400 }
+      );
+    }
+    if (!linkUrl) {
+      return NextResponse.json({ error: "Completá la URL del anuncio" }, { status: 400 });
     }
 
     const bytes = Buffer.from(await file.arrayBuffer()).toString("base64");

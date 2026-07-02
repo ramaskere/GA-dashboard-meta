@@ -1,3 +1,6 @@
+import { humanizeMetaError } from "./meta-errors";
+import { monthToTimeRange, type MonthRange } from "./months";
+
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
@@ -52,7 +55,7 @@ async function metaFetch<T>(
 
   if (!res.ok || data.error) {
     const msg = data.error?.message || `Meta API error ${res.status}`;
-    throw new Error(msg);
+    throw new Error(humanizeMetaError(msg));
   }
 
   return data as T;
@@ -71,17 +74,50 @@ const INSIGHT_FIELDS = [
   "cost_per_action_type",
 ].join(",");
 
+export type InsightsQuery =
+  | { type: "preset"; preset: DatePreset }
+  | { type: "month"; month: string };
+
+export interface InsightsFilter {
+  campaignIds?: string[];
+}
+
+function buildDateParams(query: InsightsQuery): Record<string, string> {
+  if (query.type === "preset") {
+    return { date_preset: query.preset };
+  }
+  const range: MonthRange = monthToTimeRange(query.month);
+  return {
+    time_range: JSON.stringify({ since: range.since, until: range.until }),
+  };
+}
+
+function buildFilterParams(filter?: InsightsFilter): Record<string, string> {
+  if (!filter?.campaignIds?.length) return {};
+  return {
+    filtering: JSON.stringify([
+      {
+        field: "campaign.id",
+        operator: "IN",
+        value: filter.campaignIds,
+      },
+    ]),
+  };
+}
+
 export async function fetchAccountInsights(
   adAccountId: string,
   token: string,
-  datePreset: DatePreset
+  query: InsightsQuery,
+  filter?: InsightsFilter
 ) {
   return metaFetch<{ data: MetaInsightRow[] }>(
     `/${adAccountId}/insights`,
     token,
     {
       fields: INSIGHT_FIELDS,
-      date_preset: datePreset,
+      ...buildDateParams(query),
+      ...buildFilterParams(filter),
       time_increment: "1",
     }
   );
@@ -90,14 +126,16 @@ export async function fetchAccountInsights(
 export async function fetchCampaignInsights(
   adAccountId: string,
   token: string,
-  datePreset: DatePreset
+  query: InsightsQuery,
+  filter?: InsightsFilter
 ) {
   return metaFetch<{ data: MetaInsightRow[] }>(
     `/${adAccountId}/insights`,
     token,
     {
       fields: `${INSIGHT_FIELDS},campaign_name,campaign_id`,
-      date_preset: datePreset,
+      ...buildDateParams(query),
+      ...buildFilterParams(filter),
       level: "campaign",
     }
   );
@@ -106,14 +144,16 @@ export async function fetchCampaignInsights(
 export async function fetchAdSetInsights(
   adAccountId: string,
   token: string,
-  datePreset: DatePreset
+  query: InsightsQuery,
+  filter?: InsightsFilter
 ) {
   return metaFetch<{ data: MetaInsightRow[] }>(
     `/${adAccountId}/insights`,
     token,
     {
       fields: `${INSIGHT_FIELDS},adset_name,adset_id,campaign_name`,
-      date_preset: datePreset,
+      ...buildDateParams(query),
+      ...buildFilterParams(filter),
       level: "adset",
       limit: "50",
     }
@@ -123,14 +163,16 @@ export async function fetchAdSetInsights(
 export async function fetchAdInsights(
   adAccountId: string,
   token: string,
-  datePreset: DatePreset
+  query: InsightsQuery,
+  filter?: InsightsFilter
 ) {
   return metaFetch<{ data: MetaInsightRow[] }>(
     `/${adAccountId}/insights`,
     token,
     {
       fields: `${INSIGHT_FIELDS},ad_name,ad_id,adset_name,campaign_name`,
-      date_preset: datePreset,
+      ...buildDateParams(query),
+      ...buildFilterParams(filter),
       level: "ad",
       limit: "50",
     }

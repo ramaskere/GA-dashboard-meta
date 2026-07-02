@@ -1,7 +1,12 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import {
-  COUNTRY_OPTIONS,
+  COUNTRY_REGIONS,
+  countryLabel,
+  isValidCountryCode,
+} from "@/lib/countries";
+import {
   PLACEMENT_OPTIONS,
   PIXEL_EVENT_OPTIONS,
   needsPixel,
@@ -31,15 +36,39 @@ export function SegmentationFields({
   pageId,
   onPageIdChange,
 }: SegmentationFieldsProps) {
+  const [search, setSearch] = useState("");
+  const [customCode, setCustomCode] = useState("");
   const showPixel = needsPixel(objective);
   const showPage = needsPage(objective);
+
+  const filteredRegions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return COUNTRY_REGIONS;
+    return COUNTRY_REGIONS.map((region) => ({
+      ...region,
+      countries: region.countries.filter(
+        (c) =>
+          c.label.toLowerCase().includes(q) ||
+          c.code.toLowerCase().includes(q)
+      ),
+    })).filter((r) => r.countries.length > 0);
+  }, [search]);
 
   function toggleCountry(code: string) {
     const has = segmentation.countries.includes(code);
     const countries = has
       ? segmentation.countries.filter((c) => c !== code)
       : [...segmentation.countries, code];
-    onChange({ ...segmentation, countries: countries.length ? countries : ["AR"] });
+    onChange({ ...segmentation, countries });
+  }
+
+  function addCustomCountry() {
+    const code = customCode.trim().toUpperCase();
+    if (!isValidCountryCode(code)) return;
+    if (!segmentation.countries.includes(code)) {
+      onChange({ ...segmentation, countries: [...segmentation.countries, code] });
+    }
+    setCustomCode("");
   }
 
   return (
@@ -50,21 +79,61 @@ export function SegmentationFields({
 
       <div>
         <label className="text-xs font-medium text-gray-600">Países</label>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {COUNTRY_OPTIONS.map((c) => (
-            <button
-              key={c.code}
-              type="button"
-              onClick={() => toggleCountry(c.code)}
-              className={`rounded-lg border px-2.5 py-1 text-xs transition ${
-                segmentation.countries.includes(c.code)
-                  ? "border-[var(--client-primary)] bg-blue-50 text-[var(--client-primary)]"
-                  : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-              }`}
-            >
-              {c.label}
-            </button>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar país o código ISO (ej. DE, JP)…"
+          className={`mt-1 ${fieldCls}`}
+        />
+        {segmentation.countries.length > 0 && (
+          <p className="mt-2 text-xs text-gray-500">
+            Seleccionados:{" "}
+            {segmentation.countries
+              .map((c) => `${countryLabel(c)} (${c})`)
+              .join(", ")}
+          </p>
+        )}
+        <div className="mt-3 max-h-48 space-y-3 overflow-y-auto pr-1">
+          {filteredRegions.map((region) => (
+            <div key={region.id}>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                {region.label}
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {region.countries.map((c) => (
+                  <button
+                    key={c.code}
+                    type="button"
+                    onClick={() => toggleCountry(c.code)}
+                    className={`rounded-lg border px-2 py-0.5 text-xs transition ${
+                      segmentation.countries.includes(c.code)
+                        ? "border-[var(--client-primary)] bg-blue-50 text-[var(--client-primary)]"
+                        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
+        </div>
+        <div className="mt-2 flex gap-2">
+          <input
+            value={customCode}
+            onChange={(e) => setCustomCode(e.target.value.toUpperCase())}
+            placeholder="Código ISO (ej. IT)"
+            maxLength={2}
+            className={`flex-1 ${fieldCls}`}
+          />
+          <button
+            type="button"
+            onClick={addCustomCountry}
+            className="rounded-xl border border-gray-200 px-3 text-xs hover:bg-white"
+          >
+            Agregar
+          </button>
         </div>
       </div>
 
@@ -98,7 +167,7 @@ export function SegmentationFields({
       </div>
 
       <div>
-        <label className="text-xs font-medium text-gray-600">Ubicación / placements</label>
+        <label className="text-xs font-medium text-gray-600">Placements</label>
         <select
           value={segmentation.placement}
           onChange={(e) =>
@@ -146,7 +215,6 @@ export function SegmentationFields({
               Pixel de Meta (requerido para Ventas)
             </label>
             <select
-              required
               value={segmentation.pixelId || ""}
               onChange={(e) =>
                 onChange({ ...segmentation, pixelId: e.target.value })
@@ -160,11 +228,6 @@ export function SegmentationFields({
                 </option>
               ))}
             </select>
-            {pixels.length === 0 && (
-              <p className="mt-1 text-xs text-amber-700">
-                No se encontraron pixels en la cuenta. Creá uno en Meta Events Manager.
-              </p>
-            )}
           </div>
           <div>
             <label className="text-xs font-medium text-gray-600">

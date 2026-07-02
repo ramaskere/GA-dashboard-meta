@@ -65,3 +65,10 @@ npm run dev
 ```
 
 Repo: [github.com/ramaskere/GA-dashboard-meta](https://github.com/ramaskere/GA-dashboard-meta)
+
+## Guía para el equipo (SOP)
+
+**Configurar API, Supabase y clientes nuevos:**
+
+- **PDF / imprimir:** abrí `/docs/SOP-configuracion-clientes.html` en el navegador → botón *Guardar como PDF*
+- **Markdown (repo):** `docs/SOP-configuracion-clientes.md`

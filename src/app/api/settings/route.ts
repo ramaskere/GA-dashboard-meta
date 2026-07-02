@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/auth";
-import { getClientConfig, getClientId } from "@/lib/clients";
+import {
+  getClientConfig,
+  resolveClientIdFromRequest,
+} from "@/lib/clients";
 import { getPublicSettings, saveSettings } from "@/lib/settings";
 
 export async function GET(request: NextRequest) {
@@ -9,8 +12,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const client = getClientConfig();
-    const settings = await getPublicSettings();
+    const clientId = resolveClientIdFromRequest(request);
+    const client = getClientConfig(clientId);
+    const settings = await getPublicSettings(clientId);
 
     return NextResponse.json({
       client: { id: client.id, name: client.name },
@@ -29,7 +33,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const clientSlug = getClientId();
+    const clientSlug = resolveClientIdFromRequest(request);
 
     await saveSettings(clientSlug, {
       metaAccessToken:
@@ -40,6 +44,8 @@ export async function POST(request: NextRequest) {
         body.metaAdAccountId !== undefined
           ? String(body.metaAdAccountId)
           : undefined,
+      metaPageId:
+        body.metaPageId !== undefined ? String(body.metaPageId) : undefined,
       dashboardPassword:
         body.dashboardPassword !== undefined
           ? body.dashboardPassword
@@ -48,7 +54,7 @@ export async function POST(request: NextRequest) {
           : undefined,
     });
 
-    const settings = await getPublicSettings();
+    const settings = await getPublicSettings(clientSlug);
     return NextResponse.json({ ok: true, settings });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";

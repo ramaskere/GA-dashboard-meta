@@ -1,4 +1,5 @@
 import type { AdSetSegmentation } from "./adset-segmentation";
+import { humanizeMetaError } from "./meta-errors";
 
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -40,7 +41,7 @@ interface MetaErrorBody {
 function metaErrorMessage(data: MetaErrorBody): string {
   const e = data.error;
   if (!e) return "Error de Meta API";
-  return e.error_user_msg || e.message || "Error de Meta API";
+  return humanizeMetaError(e.error_user_msg || e.message || "Error de Meta API");
 }
 
 async function metaGet<T>(
@@ -135,8 +136,12 @@ export function adSetConfigForObjective(objective: string): Record<string, strin
 }
 
 export function buildTargeting(seg: AdSetSegmentation): Record<string, unknown> {
+  if (!seg.countries.length) {
+    throw new Error("Seleccioná al menos un país para la segmentación");
+  }
+
   const targeting: Record<string, unknown> = {
-    geo_locations: { countries: seg.countries.length ? seg.countries : ["AR"] },
+    geo_locations: { countries: seg.countries },
     age_min: Math.max(18, seg.ageMin),
     age_max: Math.min(65, Math.max(seg.ageMin, seg.ageMax)),
   };
@@ -205,11 +210,15 @@ export function buildPromotedObjectFields(
 }
 
 export async function getCampaign(campaignId: string, token: string) {
-  return metaGet<{ id: string; name: string; objective: string }>(
-    `/${campaignId}`,
-    token,
-    { fields: "id,name,objective" }
-  );
+  return metaGet<{
+    id: string;
+    name: string;
+    objective: string;
+    daily_budget?: string;
+    lifetime_budget?: string;
+  }>(`/${campaignId}`, token, {
+    fields: "id,name,objective,daily_budget,lifetime_budget",
+  });
 }
 
 export async function listCampaigns(adAccountId: string, token: string) {
@@ -248,23 +257,32 @@ export async function listAds(adAccountId: string, token: string) {
   return res.data || [];
 }
 
-/** Solo campaña — sin presupuesto (el presupuesto va en el ad set). */
+/** Campaña — presupuesto opcional (CBO si se define dailyBudget). */
 export async function createCampaign(
   adAccountId: string,
   token: string,
   input: {
     name: string;
     objective: string;
+    dailyBudget?: number;
     status?: "PAUSED" | "ACTIVE";
   }
 ) {
-  return metaPostForm<{ id: string }>(`/${adAccountId}/campaigns`, token, {
+  const fields: Record<string, string> = {
     name: input.name,
     objective: input.objective,
     status: input.status || "PAUSED",
     special_ad_categories: "[]",
-    is_adset_budget_sharing_enabled: "false",
-  });
+  };
+
+  if (input.dailyBudget && input.dailyBudget > 0) {
+    fields.daily_budget = toMetaBudget(input.dailyBudget);
+    fields.is_adset_budget_sharing_enabled = "true";
+  } else {
+    fields.is_adset_budget_sharing_enabled = "false";
+  }
+
+  return metaPostForm<{ id: string }>(`/${adAccountId}/campaigns`, token, fields);
 }
 
 export async function createAdSet(
@@ -273,19 +291,26 @@ export async function createAdSet(
   input: {
     name: string;
     campaignId: string;
-    dailyBudget: number;
+    dailyBudget?: number;
     objective?: string;
     segmentation: AdSetSegmentation;
   }
 ) {
-  if (!input.dailyBudget || input.dailyBudget <= 0) {
-    throw new Error("El ad set necesita un presupuesto diario en ARS");
-  }
-
   let objective = input.objective;
-  if (!objective) {
-    const campaign = await getCampaign(input.campaignId, token);
-    objective = campaign.objective;
+  const campaign = await getCampaign(input.campaignId, token);
+  if (!objective) objective = campaign.objective;
+
+  const campaignUsesCbo = Boolean(
+    campaign.daily_budget && parseInt(campaign.daily_budget, 10) > 0
+  );
+
+  if (
+    !campaignUsesCbo &&
+    (!input.dailyBudget || input.dailyBudget <= 0)
+  ) {
+    throw new Error(
+      "Definí presupuesto en el ad set o creá la campaña con presupuesto (CBO)"
+    );
   }
 
   const seg: AdSetSegmentation = {
@@ -297,14 +322,19 @@ export async function createAdSet(
   const objectiveConfig = adSetConfigForObjective(objective);
   const promotedFields = buildPromotedObjectFields(objective, seg);
 
-  return metaPostForm<{ id: string }>(`/${adAccountId}/adsets`, token, {
+  const fields: Record<string, string> = {
     name: input.name,
     campaign_id: input.campaignId,
-    daily_budget: toMetaBudget(input.dailyBudget),
     targeting,
     ...objectiveConfig,
     ...promotedFields,
-  });
+  };
+
+  if (!campaignUsesCbo && input.dailyBudget) {
+    fields.daily_budget = toMetaBudget(input.dailyBudget);
+  }
+
+  return metaPostForm<{ id: string }>(`/${adAccountId}/adsets`, token, fields);
 }
 
 export async function uploadAdImage(
@@ -378,14 +408,40 @@ export async function listPixels(adAccountId: string, token: string) {
   return res.data || [];
 }
 
-export async function getAdAccountPages(adAccountId: string, token: string) {
+export async function listAdAccounts(token: string) {
   const res = await metaGet<{
+    data: Array<{
+      id: string;
+      name: string;
+      account_id: string;
+      currency?: string;
+      account_status?: number;
+    }>;
+  }>("/me/adaccounts", token, {
+    fields: "id,name,account_id,currency,account_status",
+    limit: "100",
+  });
+  return res.data || [];
+}
+
+export async function getAdAccountPages(adAccountId: string, token: string) {
+  const fromPromote = await metaGet<{
     data: Array<{ id: string; name: string }>;
   }>(`/${adAccountId}/promote_pages`, token, {
     fields: "id,name",
     limit: "25",
-  });
-  return res.data || [];
+  }).catch(() => ({ data: [] }));
+
+  if (fromPromote.data?.length) return fromPromote.data;
+
+  const fromAssigned = await metaGet<{
+    data: Array<{ id: string; name: string }>;
+  }>(`/${adAccountId}/assigned_pages`, token, {
+    fields: "id,name",
+    limit: "25",
+  }).catch(() => ({ data: [] }));
+
+  return fromAssigned.data || [];
 }
 
 export const CAMPAIGN_OBJECTIVES = [
@@ -396,5 +452,5 @@ export const CAMPAIGN_OBJECTIVES = [
   { value: "OUTCOME_AWARENESS", label: "Reconocimiento" },
 ];
 
-/** Mínimo sugerido en ARS (Meta exige un piso; varía por cuenta). */
-export const SUGGESTED_MIN_DAILY_BUDGET_ARS = 3000;
+/** Mínimo sugerido en unidades de la moneda de la cuenta (orientativo). */
+export const SUGGESTED_MIN_DAILY_BUDGET = 5;

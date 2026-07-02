@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveClientIdFromRequest } from "@/lib/clients";
 import { getDashboardPassword } from "@/lib/settings";
 
 export async function POST(request: NextRequest) {
-  const password = await getDashboardPassword();
+  const clientId = resolveClientIdFromRequest(request);
+  const password = await getDashboardPassword(clientId);
 
   if (!password) {
     return NextResponse.json({ ok: true, protected: false });

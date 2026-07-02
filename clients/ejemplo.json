@@ -1,11 +1,11 @@
 {
-  "id": "go-apple",
-  "name": "Go Apple",
-  "tagline": "Reportes de Meta Ads",
+  "id": "ejemplo",
+  "name": "Cliente Ejemplo",
+  "tagline": "Plantilla multi-cliente",
   "logo": "/clients/go-apple/logo.svg",
-  "primaryColor": "#0071e3",
+  "primaryColor": "#5856d6",
   "accentColor": "#1d1d1f",
-  "currency": "ARS",
+  "currency": "USD",
   "locale": "es-AR",
   "timezone": "America/Argentina/Buenos_Aires",
   "defaultCountries": ["AR"]

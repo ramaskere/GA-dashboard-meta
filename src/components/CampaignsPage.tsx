@@ -6,10 +6,15 @@ import { clientCssVars } from "@/lib/format";
 import { AppHeader } from "./AppHeader";
 import { AdminLoginGate } from "./AdminLoginGate";
 import { SegmentationFields } from "./SegmentationFields";
+import { BudgetFields } from "./BudgetFields";
 import {
   defaultSegmentation,
+  campaignHasBudget,
   type AdSetSegmentation,
+  type BudgetLevel,
 } from "@/lib/adset-segmentation";
+import { CAMPAIGN_OBJECTIVES } from "@/lib/meta-manage";
+import { MetaAssetPicker } from "./MetaAssetPicker";
 
 type Tab = "campaign" | "adset" | "ad" | "wizard";
 
@@ -19,6 +24,8 @@ interface CampaignsData {
     name: string;
     status: string;
     objective: string;
+    daily_budget?: string;
+    lifetime_budget?: string;
   }>;
   adSets: Array<{
     id: string;
@@ -30,11 +37,15 @@ interface CampaignsData {
   pages: Array<{ id: string; name: string }>;
   pixels: Array<{ id: string; name: string }>;
   objectives: Array<{ value: string; label: string }>;
-  suggestedMinDailyBudgetArs?: number;
+  accountCurrency?: string;
+  suggestedMinDailyBudget?: number;
+  adAccountId?: string;
+  defaultPageId?: string;
 }
 
 interface CampaignsPageProps {
   client: ClientConfig;
+  availableClients?: Pick<ClientConfig, "id" | "name">[];
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -47,7 +58,7 @@ const TABS: { id: Tab; label: string }[] = [
 const inputCls =
   "w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:border-[var(--client-primary)]";
 
-export function CampaignsPage({ client }: CampaignsPageProps) {
+export function CampaignsPage({ client, availableClients = [] }: CampaignsPageProps) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>("campaign");
@@ -60,10 +71,13 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
 
   const [campName, setCampName] = useState("");
   const [objective, setObjective] = useState("OUTCOME_TRAFFIC");
+  const [campBudgetLevel, setCampBudgetLevel] = useState<BudgetLevel>("adset");
+  const [campBudget, setCampBudget] = useState("");
 
   const [adSetName, setAdSetName] = useState("");
   const [adSetCampaignId, setAdSetCampaignId] = useState("");
-  const [adSetBudget, setAdSetBudget] = useState("5000");
+  const [adSetBudgetLevel, setAdSetBudgetLevel] = useState<BudgetLevel>("adset");
+  const [adSetBudget, setAdSetBudget] = useState("");
 
   const [adSetId, setAdSetId] = useState("");
   const [adName, setAdName] = useState("");
@@ -75,21 +89,30 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
   const [wizCamp, setWizCamp] = useState("");
   const [wizAdSet, setWizAdSet] = useState("");
   const [wizObjective, setWizObjective] = useState("OUTCOME_TRAFFIC");
-  const [wizBudget, setWizBudget] = useState("5000");
+  const [wizBudgetLevel, setWizBudgetLevel] = useState<BudgetLevel>("adset");
+  const [wizBudget, setWizBudget] = useState("");
   const [wizAdSetId, setWizAdSetId] = useState("");
-  const [segmentation, setSegmentation] = useState<AdSetSegmentation>(
-    defaultSegmentation()
+  const [segmentation, setSegmentation] = useState<AdSetSegmentation>(() =>
+    defaultSegmentation(client.defaultCountries)
   );
-  const [wizSegmentation, setWizSegmentation] = useState<AdSetSegmentation>(
-    defaultSegmentation()
+  const [wizSegmentation, setWizSegmentation] = useState<AdSetSegmentation>(() =>
+    defaultSegmentation(client.defaultCountries)
   );
 
   const style = clientCssVars(client);
-  const minBudget = data?.suggestedMinDailyBudgetArs ?? 3000;
+  const accountCurrency = data?.accountCurrency || client.currency;
+
+  const selectedCampaign =
+    data?.campaigns.find((c) => c.id === adSetCampaignId);
 
   const selectedCampaignObjective =
-    data?.campaigns.find((c) => c.id === adSetCampaignId)?.objective ||
-    "OUTCOME_TRAFFIC";
+    selectedCampaign?.objective || "OUTCOME_TRAFFIC";
+
+  const objectives = data?.objectives?.length
+    ? data.objectives
+    : CAMPAIGN_OBJECTIVES;
+
+  const selectedCampaignHasCbo = campaignHasBudget(selectedCampaign);
 
   function segPayload(seg: AdSetSegmentation) {
     return {
@@ -106,30 +129,36 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await fetch("/api/campaigns");
-    if (res.status === 401) {
-      setAuthenticated(false);
-      setChecking(false);
-      setLoading(false);
-      return;
-    }
-    const json = await res.json();
-    if (!res.ok) {
-      setError(json.error || "Error al cargar");
-      setData(null);
-    } else {
-      setData(json);
-      setPageId((p) => p || json.pages?.[0]?.id || "");
-      setAdSetCampaignId((c) => c || json.campaigns?.[0]?.id || "");
-      setAdSetId((a) => a || json.adSets?.[0]?.id || "");
-      const firstPixel = json.pixels?.[0]?.id;
-      if (firstPixel) {
-        setSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
-        setWizSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
+    try {
+      const res = await fetch("/api/campaigns");
+      if (res.status === 401) {
+        setAuthenticated(false);
+        return;
       }
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error || "Error al cargar");
+        setData(null);
+      } else {
+        setData(json);
+        setPageId(
+          (p) => p || json.defaultPageId || json.pages?.[0]?.id || ""
+        );
+        setAdSetCampaignId((c) => c || json.campaigns?.[0]?.id || "");
+        setAdSetId((a) => a || json.adSets?.[0]?.id || "");
+        const firstPixel = json.pixels?.[0]?.id;
+        if (firstPixel) {
+          setSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
+          setWizSegmentation((s) => ({ ...s, pixelId: s.pixelId || firstPixel }));
+        }
+      }
+    } catch {
+      setError("No se pudo conectar con el servidor. ¿Está corriendo npm run dev?");
+      setData(null);
+    } finally {
+      setLoading(false);
+      setChecking(false);
     }
-    setLoading(false);
-    setChecking(false);
   }, []);
 
   useEffect(() => {
@@ -137,10 +166,20 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
   }, [authenticated, load]);
 
   useEffect(() => {
-    fetch("/api/settings").then((res) => {
-      setAuthenticated(res.status !== 401);
-      setChecking(false);
-    });
+    let cancelled = false;
+    fetch("/api/admin-auth")
+      .then((res) => {
+        if (!cancelled) setAuthenticated(res.ok);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthenticated(false);
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [lastSuccess, setLastSuccess] = useState(false);
@@ -148,20 +187,25 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
   async function postCampaign(body: Record<string, unknown>) {
     setMessage(null);
     setLastSuccess(false);
-    const res = await fetch("/api/campaigns", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      setMessage(json.error || "Error");
+    try {
+      const res = await fetch("/api/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(json.error || "Error");
+        return null;
+      }
+      setMessage(json.message || "Listo");
+      setLastSuccess(true);
+      await load();
+      return json;
+    } catch {
+      setMessage("No se pudo conectar con el servidor");
       return null;
     }
-    setMessage(json.message || "Listo");
-    setLastSuccess(true);
-    await load();
-    return json;
   }
 
   async function handleCreateCampaign(e: React.FormEvent) {
@@ -170,6 +214,9 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       action: "create_campaign",
       name: campName,
       objective,
+      budgetLevel: campBudgetLevel,
+      dailyBudget:
+        campBudgetLevel === "campaign" ? Number(campBudget) : undefined,
     });
     if (result) {
       setCampName("");
@@ -180,11 +227,20 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
 
   async function handleCreateAdSet(e: React.FormEvent) {
     e.preventDefault();
+    if (!selectedCampaignHasCbo) {
+      const budget = Number(adSetBudget);
+      if (!budget || budget <= 0) {
+        setMessage("Indicá el presupuesto diario del ad set (ABO)");
+        setLastSuccess(false);
+        return;
+      }
+    }
     const result = await postCampaign({
       action: "create_adset",
       name: adSetName,
       campaignId: adSetCampaignId,
-      dailyBudget: Number(adSetBudget),
+      budgetLevel: selectedCampaignHasCbo ? "campaign" : "adset",
+      dailyBudget: selectedCampaignHasCbo ? undefined : Number(adSetBudget),
       ...segPayload({ ...segmentation, pageId }),
     });
     if (result) {
@@ -201,6 +257,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
       campaignName: wizCamp,
       adSetName: wizAdSet,
       objective: wizObjective,
+      budgetLevel: wizBudgetLevel,
       dailyBudget: Number(wizBudget),
       ...segPayload({ ...wizSegmentation, pageId }),
     });
@@ -215,41 +272,58 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
 
   async function handleUploadAd(e: React.FormEvent) {
     e.preventDefault();
+    setLastSuccess(false);
     if (!image) {
       setMessage("Seleccioná una imagen");
+      return;
+    }
+    if (!adSetId) {
+      setMessage("Elegí un ad set");
+      return;
+    }
+    if (!pageId.trim()) {
+      setMessage(
+        "Falta la página de Facebook. Elegila abajo o pegá el Page ID manualmente."
+      );
+      return;
+    }
+    if (!primaryText.trim() || !headline.trim()) {
+      setMessage("Completá el texto principal y el título");
+      return;
+    }
+    if (!linkUrl.trim()) {
+      setMessage("Completá la URL del anuncio");
       return;
     }
     setMessage(null);
     const form = new FormData();
     form.set("image", image);
     form.set("adSetId", adSetId);
-    form.set("pageId", pageId);
-    form.set("adName", adName);
+    form.set("pageId", pageId.trim());
+    form.set("adName", adName.trim() || headline.trim() || "Nuevo anuncio");
     form.set("primaryText", primaryText);
     form.set("headline", headline);
     form.set("linkUrl", linkUrl);
 
-    const res = await fetch("/api/ads", { method: "POST", body: form });
-    const json = await res.json();
-    if (!res.ok) {
-      setMessage(json.error || "Error");
-      return;
+    try {
+      const res = await fetch("/api/ads", { method: "POST", body: form });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage(json.error || "Error");
+        setLastSuccess(false);
+        return;
+      }
+      setMessage(json.message || "Anuncio creado");
+      setLastSuccess(true);
+      setImage(null);
+      setAdName("");
+      setPrimaryText("");
+      setHeadline("");
+      load();
+    } catch {
+      setMessage("No se pudo conectar con el servidor");
+      setLastSuccess(false);
     }
-    setMessage(json.message || "Anuncio creado");
-    setImage(null);
-    setAdName("");
-    setPrimaryText("");
-    setHeadline("");
-    load();
-  }
-
-  function BudgetHint() {
-    return (
-      <p className="text-xs text-gray-400">
-        En <strong>pesos ARS</strong> por día (no USD). Meta suele exigir mínimo ~
-        {minBudget.toLocaleString("es-AR")} ARS en el ad set.
-      </p>
-    );
   }
 
   if (checking) {
@@ -276,7 +350,12 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
 
   return (
     <div className="min-h-screen" style={style}>
-      <AppHeader client={client} active="campaigns" />
+      <AppHeader
+        client={client}
+        active="campaigns"
+        availableClients={availableClients}
+        isAdmin
+      />
 
       <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <p className="mb-4 text-sm text-gray-500">
@@ -329,8 +408,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
           >
             <h2 className="text-sm font-semibold">Solo campaña</h2>
             <p className="mt-1 text-xs text-gray-500">
-              Sin presupuesto ni ad set. Después creás el ad set en la pestaña
-              siguiente.
+              Podés definir el presupuesto acá (CBO) o después en cada ad set (ABO).
             </p>
             <div className="mt-4 space-y-3">
               <input
@@ -345,12 +423,20 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 onChange={(e) => setObjective(e.target.value)}
                 className={inputCls}
               >
-                {(data?.objectives || []).map((o) => (
+                {(objectives).map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
               </select>
+              <BudgetFields
+                level={campBudgetLevel}
+                onLevelChange={setCampBudgetLevel}
+                amount={campBudget}
+                onAmountChange={setCampBudget}
+                currency={accountCurrency}
+                adSetBudgetLater
+              />
             </div>
             <button
               type="submit"
@@ -368,7 +454,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
           >
             <h2 className="text-sm font-semibold">Solo ad set</h2>
             <p className="mt-1 text-xs text-gray-500">
-              Elegí una campaña existente. El presupuesto va acá (en ARS).
+              Elegí una campaña existente. Si la campaña no tiene CBO, definí el presupuesto en el ad set.
             </p>
             <div className="mt-4 space-y-3">
               <input
@@ -388,20 +474,20 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 {(data?.campaigns || []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name} ({c.objective})
+                    {campaignHasBudget(c) ? " · CBO" : ""}
                   </option>
                 ))}
               </select>
-              <input
-                required
-                type="number"
-                min={1}
-                step={100}
-                value={adSetBudget}
-                onChange={(e) => setAdSetBudget(e.target.value)}
-                placeholder={`Presupuesto diario ARS (mín. ~${minBudget})`}
-                className={inputCls}
+              <BudgetFields
+                level={selectedCampaignHasCbo ? "campaign" : "adset"}
+                onLevelChange={setAdSetBudgetLevel}
+                amount={adSetBudget}
+                onAmountChange={setAdSetBudget}
+                currency={accountCurrency}
+                showLevelToggle={false}
+                campaignHasBudget={selectedCampaignHasCbo}
+                onlyAdSetLevel={!selectedCampaignHasCbo}
               />
-              <BudgetHint />
               <SegmentationFields
                 segmentation={segmentation}
                 onChange={setSegmentation}
@@ -432,19 +518,13 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
               Subí creativo a un ad set que ya exista.
             </p>
             <div className="mt-4 space-y-3">
-              {data?.pages && data.pages.length > 0 && (
-                <select
-                  value={pageId}
-                  onChange={(e) => setPageId(e.target.value)}
-                  className={inputCls}
-                >
-                  {data.pages.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      Página: {p.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <MetaAssetPicker
+                pagesOnly
+                adAccountId={data?.adAccountId || ""}
+                onAdAccountIdChange={() => {}}
+                pageId={pageId}
+                onPageIdChange={setPageId}
+              />
               <select
                 required
                 value={adSetId}
@@ -527,7 +607,7 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 onChange={(e) => setWizObjective(e.target.value)}
                 className={inputCls}
               >
-                {(data?.objectives || []).map((o) => (
+                {(objectives).map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -540,17 +620,13 @@ export function CampaignsPage({ client }: CampaignsPageProps) {
                 placeholder="Nombre ad set"
                 className={inputCls}
               />
-              <input
-                required
-                type="number"
-                min={1}
-                step={100}
-                value={wizBudget}
-                onChange={(e) => setWizBudget(e.target.value)}
-                placeholder={`Presupuesto diario ARS (mín. ~${minBudget})`}
-                className={inputCls}
+              <BudgetFields
+                level={wizBudgetLevel}
+                onLevelChange={setWizBudgetLevel}
+                amount={wizBudget}
+                onAmountChange={setWizBudget}
+                currency={accountCurrency}
               />
-              <BudgetHint />
               <SegmentationFields
                 segmentation={wizSegmentation}
                 onChange={setWizSegmentation}

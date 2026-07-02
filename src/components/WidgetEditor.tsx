@@ -59,9 +59,10 @@ export function WidgetEditor({ config, onSave, disabled }: WidgetEditorProps) {
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
       <h2 className="text-sm font-semibold text-[#1d1d1f]">Widgets del dashboard</h2>
-      <p className="mt-1 text-xs text-gray-500">
-        Activá, desactivá y ordená lo que ve el cliente en la pantalla principal.
-      </p>
+        <p className="mt-1 text-xs text-gray-500">
+          Activá, desactivá y ordená widgets. Para metas y vista previa, usá{" "}
+          <strong>Personalizar</strong> en el dashboard principal.
+        </p>
 
       <ul className="mt-4 space-y-2">
         {sorted.map((w, i) => {

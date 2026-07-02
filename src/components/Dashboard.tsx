@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ClientConfig } from "@/lib/clients";
 import {
@@ -12,29 +12,57 @@ import {
 import {
   enabledWidgets,
   defaultWidgetConfig,
+  getGoalsForMonth,
+  campaignsEnabled,
   type WidgetConfig,
   type WidgetId,
+  type DashboardGoals,
+  type GoalMetricId,
 } from "@/lib/widgets";
+import { behindPaceAlerts } from "@/lib/goals";
 import { KpiCard } from "./KpiCard";
-import { SpendChart, ClicksChart } from "./Charts";
+import { SpendChart, ClicksChart, CumulativeSpendChart } from "./Charts";
 import { DataTable } from "./DataTable";
 import { LoginGate } from "./LoginGate";
 import { AppHeader } from "./AppHeader";
+import { DashboardEditorPanel } from "./DashboardEditorPanel";
+import { GoalsSummary } from "./GoalsSummary";
+import { PaceAlertBanner } from "./PaceAlertBanner";
+import { ExportMenu } from "./ExportMenu";
+import {
+  currentMonthKey,
+  listMonthOptions,
+} from "@/lib/months";
+import type { ExportReportInput } from "@/lib/export-report";
 
-type DatePreset =
-  | "today"
-  | "yesterday"
-  | "last_7d"
-  | "last_14d"
-  | "last_30d"
-  | "this_month"
-  | "last_month";
+const MONTH_OPTIONS = listMonthOptions(12);
+
+const KPI_GOAL_KEY: Partial<Record<WidgetId, GoalMetricId>> = {
+  kpi_spend: "spend",
+  kpi_impressions: "impressions",
+  kpi_clicks: "clicks",
+  kpi_reach: "reach",
+  kpi_messages: "messages",
+  kpi_leads: "leads",
+  kpi_purchases: "purchases",
+};
 
 interface InsightsData {
   client: { id: string; name: string; currency: string };
   account: { name: string; status: number; timezone: string };
   widgetConfig?: WidgetConfig;
-  preset: string;
+  period?: {
+    type: "month" | "preset";
+    month?: string;
+    label?: string;
+    isCurrentMonth?: boolean;
+    monthElapsedPct?: number;
+  };
+  previousPeriod?: {
+    month: string;
+    label: string;
+    changePct: Partial<Record<GoalMetricId, number | null>>;
+  };
   totals: {
     spend: number;
     impressions: number;
@@ -76,71 +104,160 @@ interface InsightsData {
   updatedAt: string;
 }
 
-const PRESETS: { value: DatePreset; label: string }[] = [
-  { value: "today", label: "Hoy" },
-  { value: "yesterday", label: "Ayer" },
-  { value: "last_7d", label: "7 días" },
-  { value: "last_14d", label: "14 días" },
-  { value: "last_30d", label: "30 días" },
-  { value: "this_month", label: "Este mes" },
-  { value: "last_month", label: "Mes anterior" },
-];
-
 interface DashboardProps {
   client: ClientConfig;
+  availableClients?: Pick<ClientConfig, "id" | "name">[];
 }
 
-export function Dashboard({ client }: DashboardProps) {
-  const [preset, setPreset] = useState<DatePreset>("last_30d");
+export function Dashboard({ client, availableClients = [] }: DashboardProps) {
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
+  const [campaignFilter, setCampaignFilter] = useState("all");
+  const [allCampaigns, setAllCampaigns] = useState<InsightsData["campaigns"]>([]);
   const [data, setData] = useState<InsightsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin-auth")
+      .then((res) => setIsAdmin(res.ok))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await fetch(`/api/insights?preset=${preset}`);
+    try {
+      const params = new URLSearchParams({ month: selectedMonth });
+      if (campaignFilter !== "all") {
+        params.set("campaignId", campaignFilter);
+      }
+      const res = await fetch(`/api/insights?${params}`);
 
-    if (res.status === 401) {
-      setNeedsAuth(true);
-      setLoading(false);
-      return;
-    }
+      if (res.status === 401) {
+        setNeedsAuth(true);
+        return;
+      }
 
-    const json = await res.json();
+      const json = await res.json();
 
-    if (res.status === 503 && json.needsSetup) {
-      setNeedsSetup(true);
-      setError(json.error || "API no configurada");
+      if (res.status === 503 && json.needsSetup) {
+        setNeedsSetup(true);
+        setError(json.error || "API no configurada");
+        setData(null);
+        return;
+      }
+
+      if (!res.ok) {
+        setNeedsSetup(false);
+        setError(json.error || "Error al cargar datos");
+        setData(null);
+      } else {
+        setNeedsSetup(false);
+        setData(json);
+        setNeedsAuth(false);
+      }
+    } catch {
+      setError("No se pudo conectar con el servidor. ¿Está corriendo npm run dev?");
       setData(null);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!res.ok) {
-      setNeedsSetup(false);
-      setError(json.error || "Error al cargar datos");
-      setData(null);
-    } else {
-      setNeedsSetup(false);
-      setData(json);
-      setNeedsAuth(false);
-    }
-    setLoading(false);
-  }, [preset]);
+  }, [selectedMonth, campaignFilter]);
 
   useEffect(() => {
     if (!needsAuth || authenticated) fetchData();
   }, [fetchData, needsAuth, authenticated]);
+
+  useEffect(() => {
+    if (data?.campaigns?.length && campaignFilter === "all") {
+      setAllCampaigns(data.campaigns);
+    }
+  }, [data?.campaigns, campaignFilter]);
 
   const style = clientCssVars(client);
   const currency = data?.client.currency || client.currency;
   const locale = client.locale;
   const widgetConfig = data?.widgetConfig || defaultWidgetConfig();
   const widgets = enabledWidgets(widgetConfig);
+  const monthGoals = getGoalsForMonth(widgetConfig, selectedMonth);
+  const showCampaigns = campaignsEnabled(widgetConfig);
+
+  const periodLabel =
+    data?.period?.label ||
+    MONTH_OPTIONS.find((m) => m.value === selectedMonth)?.label ||
+    selectedMonth;
+  const isCurrentMonth =
+    data?.period?.isCurrentMonth ?? selectedMonth === currentMonthKey();
+  const monthElapsedPct = data?.period?.monthElapsedPct;
+  const previousLabel = data?.previousPeriod?.label;
+  const changePct = data?.previousPeriod?.changePct;
+
+  const paceAlerts = useMemo(() => {
+    if (!data || monthElapsedPct === undefined) return [];
+    return behindPaceAlerts(
+      widgetConfig,
+      selectedMonth,
+      data.totals,
+      monthElapsedPct,
+      isCurrentMonth
+    );
+  }, [data, widgetConfig, selectedMonth, monthElapsedPct, isCurrentMonth]);
+
+  const exportReport: ExportReportInput | null = useMemo(() => {
+    if (!data) return null;
+    return {
+      clientName: data.client.name,
+      periodLabel,
+      currency,
+      locale,
+      totals: data.totals,
+      campaigns: data.campaigns,
+      goals: monthGoals,
+      comparisonLabel: previousLabel,
+      comparison: changePct,
+    };
+  }, [data, periodLabel, currency, locale, monthGoals, previousLabel, changePct]);
+
+  async function saveDashboardConfig(config: WidgetConfig) {
+    const res = await fetch("/api/widgets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ widgetConfig: config }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || "No se pudo guardar");
+    }
+    setData((prev) => (prev ? { ...prev, widgetConfig: json.widgetConfig } : prev));
+  }
+
+  function kpiComparison(id: WidgetId) {
+    const key = KPI_GOAL_KEY[id];
+    if (!key || !changePct) return {};
+    return {
+      comparisonPct: changePct[key],
+      comparisonLabel: previousLabel,
+    };
+  }
+
+  function kpiGoalProps(id: WidgetId) {
+    const key = KPI_GOAL_KEY[id];
+    if (!key || !data || !monthGoals?.[key]) return { ...kpiComparison(id) };
+    return {
+      goalTarget: monthGoals[key],
+      goalActual: data.totals[key],
+      goalLabel: "Meta mensual",
+      editing: editMode,
+      isCurrentMonth,
+      monthElapsedPct,
+      ...kpiComparison(id),
+    };
+  }
 
   function renderWidget(id: WidgetId) {
     if (!data && !loading) return null;
@@ -158,6 +275,7 @@ export function Dashboard({ client }: DashboardProps) {
                   ? "—"
                   : "$0"
             }
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_impressions":
@@ -166,6 +284,7 @@ export function Dashboard({ client }: DashboardProps) {
             key={id}
             label="Impresiones"
             value={data ? formatNumber(data.totals.impressions, locale) : "—"}
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_clicks":
@@ -175,6 +294,7 @@ export function Dashboard({ client }: DashboardProps) {
             label="Clics"
             value={data ? formatNumber(data.totals.clicks, locale) : "—"}
             sub={data ? `CTR ${formatPercent(data.totals.ctr)}` : undefined}
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_reach":
@@ -188,6 +308,7 @@ export function Dashboard({ client }: DashboardProps) {
                 ? `CPC ${formatCurrency(data.totals.cpc, currency, locale)}`
                 : undefined
             }
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_cpm":
@@ -196,6 +317,7 @@ export function Dashboard({ client }: DashboardProps) {
             key={id}
             label="CPM"
             value={data ? formatCurrency(data.totals.cpm, currency, locale) : "—"}
+            {...kpiComparison(id)}
           />
         );
       case "kpi_messages":
@@ -204,6 +326,7 @@ export function Dashboard({ client }: DashboardProps) {
             key={id}
             label="Mensajes"
             value={data ? formatNumber(data.totals.messages, locale) : "—"}
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_leads":
@@ -212,6 +335,7 @@ export function Dashboard({ client }: DashboardProps) {
             key={id}
             label="Leads"
             value={data ? formatNumber(data.totals.leads, locale) : "—"}
+            {...kpiGoalProps(id)}
           />
         );
       case "kpi_purchases":
@@ -220,13 +344,18 @@ export function Dashboard({ client }: DashboardProps) {
             key={id}
             label="Compras"
             value={data ? formatNumber(data.totals.purchases, locale) : "—"}
+            {...kpiGoalProps(id)}
           />
         );
       case "chart_spend":
         return (
           <div
             key={id}
-            className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm lg:col-span-1"
+            className={`rounded-2xl border bg-white p-5 shadow-sm lg:col-span-1 ${
+              editMode
+                ? "border-dashed border-[var(--client-primary)]/40"
+                : "border-gray-100"
+            }`}
           >
             <h3 className="mb-4 text-sm font-semibold">Gasto diario</h3>
             {loading ? (
@@ -242,7 +371,11 @@ export function Dashboard({ client }: DashboardProps) {
         return (
           <div
             key={id}
-            className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm lg:col-span-1"
+            className={`rounded-2xl border bg-white p-5 shadow-sm lg:col-span-1 ${
+              editMode
+                ? "border-dashed border-[var(--client-primary)]/40"
+                : "border-gray-100"
+            }`}
           >
             <h3 className="mb-4 text-sm font-semibold">Clics por día</h3>
             {loading ? (
@@ -251,6 +384,35 @@ export function Dashboard({ client }: DashboardProps) {
               </div>
             ) : data ? (
               <ClicksChart data={data.daily} locale={locale} />
+            ) : null}
+          </div>
+        );
+      case "chart_cumulative":
+        return (
+          <div
+            key={id}
+            className={`rounded-2xl border bg-white p-5 shadow-sm lg:col-span-2 ${
+              editMode
+                ? "border-dashed border-[var(--client-primary)]/40"
+                : "border-gray-100"
+            }`}
+          >
+            <h3 className="mb-1 text-sm font-semibold">Gasto acumulado vs meta</h3>
+            <p className="mb-4 text-xs text-gray-400">
+              Línea punteada = ritmo lineal hacia la meta de inversión del mes.
+            </p>
+            {loading ? (
+              <div className="flex h-64 items-center justify-center text-sm text-gray-400">
+                Cargando…
+              </div>
+            ) : data ? (
+              <CumulativeSpendChart
+                data={data.daily}
+                monthKey={selectedMonth}
+                spendGoal={monthGoals?.spend}
+                currency={currency}
+                locale={locale}
+              />
             ) : null}
           </div>
         );
@@ -267,7 +429,10 @@ export function Dashboard({ client }: DashboardProps) {
               { key: "ctr", label: "CTR", align: "right" },
               { key: "cpc", label: "CPC", align: "right" },
             ]}
-            rows={data.campaigns.map((c) => ({
+            rows={(campaignFilter === "all"
+              ? data.campaigns
+              : data.campaigns.filter((c) => c.id === campaignFilter)
+            ).map((c) => ({
               name: c.name,
               spend: formatCurrency(c.spend, currency, locale),
               impressions: formatNumber(c.impressions, locale),
@@ -317,18 +482,41 @@ export function Dashboard({ client }: DashboardProps) {
 
   return (
     <div className="min-h-screen" style={style}>
-      <AppHeader client={client} active="dashboard">
+      <AppHeader
+        client={client}
+        active="dashboard"
+        campaignsEnabled={showCampaigns}
+        availableClients={availableClients}
+        isAdmin={isAdmin}
+      >
         <select
-          value={preset}
-          onChange={(e) => setPreset(e.target.value as DatePreset)}
+          value={selectedMonth}
+          onChange={(e) => setSelectedMonth(e.target.value)}
           className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[var(--client-primary)]"
+          aria-label="Mes"
         >
-          {PRESETS.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
+          {MONTH_OPTIONS.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.isCurrent ? `${m.label} (actual)` : m.label}
             </option>
           ))}
         </select>
+        {allCampaigns.length > 0 && (
+          <select
+            value={campaignFilter}
+            onChange={(e) => setCampaignFilter(e.target.value)}
+            className="max-w-[180px] rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[var(--client-primary)]"
+            aria-label="Campaña"
+          >
+            <option value="all">Todas las campañas</option>
+            {allCampaigns.map((c) => (
+              <option key={c.id || c.name} value={c.id || ""}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <ExportMenu report={exportReport} disabled={loading || !data} />
         <button
           onClick={fetchData}
           disabled={loading}
@@ -336,6 +524,15 @@ export function Dashboard({ client }: DashboardProps) {
         >
           {loading ? "…" : "↻"}
         </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setEditMode(true)}
+            className="rounded-xl border border-[var(--client-primary)]/30 bg-blue-50 px-3 py-2 text-sm font-medium text-[var(--client-primary)] hover:bg-blue-100"
+          >
+            ✎ Personalizar
+          </button>
+        )}
       </AppHeader>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -361,12 +558,37 @@ export function Dashboard({ client }: DashboardProps) {
         {data?.account && (
           <p className="mb-6 text-sm text-gray-500">
             Cuenta: <span className="font-medium text-gray-700">{data.account.name}</span>
+            {campaignFilter !== "all" && (
+              <span className="ml-2 text-[var(--client-primary)]">· Filtro por campaña activo</span>
+            )}
             {data.updatedAt && (
               <span className="ml-2">
                 · Actualizado {new Date(data.updatedAt).toLocaleString(locale)}
               </span>
             )}
           </p>
+        )}
+
+        {isCurrentMonth && monthElapsedPct !== undefined && paceAlerts.length > 0 && (
+          <PaceAlertBanner
+            alerts={paceAlerts}
+            periodLabel={periodLabel}
+            monthElapsedPct={monthElapsedPct}
+          />
+        )}
+
+        {data && (
+          <GoalsSummary
+            goals={monthGoals}
+            totals={data.totals}
+            currency={currency}
+            locale={locale}
+            periodLabel={periodLabel}
+            isCurrentMonth={isCurrentMonth}
+            monthElapsedPct={monthElapsedPct}
+            changePct={changePct}
+            previousLabel={previousLabel}
+          />
         )}
 
         {kpiWidgets.length > 0 && (
@@ -387,6 +609,16 @@ export function Dashboard({ client }: DashboardProps) {
           </div>
         )}
       </main>
+
+      {editMode && (
+        <DashboardEditorPanel
+          config={widgetConfig}
+          selectedMonth={selectedMonth}
+          currency={currency}
+          onSave={saveDashboardConfig}
+          onClose={() => setEditMode(false)}
+        />
+      )}
 
       <footer className="mt-12 border-t border-gray-200 py-6 text-center text-xs text-gray-400">
         Dashboard Meta Ads · {client.name}

@@ -1,3 +1,7 @@
+import { isValidCountryCode } from "./countries";
+
+export type BudgetLevel = "campaign" | "adset";
+
 export interface AdSetSegmentation {
   countries: string[];
   ageMin: number;
@@ -7,20 +11,6 @@ export interface AdSetSegmentation {
   pixelEvent?: string;
   pageId?: string;
 }
-
-export const COUNTRY_OPTIONS = [
-  { code: "AR", label: "Argentina" },
-  { code: "CL", label: "Chile" },
-  { code: "UY", label: "Uruguay" },
-  { code: "PY", label: "Paraguay" },
-  { code: "BO", label: "Bolivia" },
-  { code: "BR", label: "Brasil" },
-  { code: "MX", label: "México" },
-  { code: "CO", label: "Colombia" },
-  { code: "PE", label: "Perú" },
-  { code: "US", label: "Estados Unidos" },
-  { code: "ES", label: "España" },
-];
 
 export const PLACEMENT_OPTIONS = [
   { value: "auto", label: "Automático (Meta elige)" },
@@ -39,9 +29,22 @@ export const PIXEL_EVENT_OPTIONS = [
   { value: "SEARCH", label: "Búsqueda" },
 ];
 
-export function defaultSegmentation(): AdSetSegmentation {
+export const BUDGET_LEVEL_OPTIONS = [
+  {
+    value: "adset" as const,
+    label: "Ad set (ABO)",
+    hint: "Cada ad set tiene su propio presupuesto diario.",
+  },
+  {
+    value: "campaign" as const,
+    label: "Campaña (CBO)",
+    hint: "Meta reparte el presupuesto entre los ad sets de la campaña.",
+  },
+];
+
+export function defaultSegmentation(defaultCountries: string[] = []): AdSetSegmentation {
   return {
-    countries: ["AR"],
+    countries: defaultCountries.length ? [...defaultCountries] : [],
     ageMin: 18,
     ageMax: 65,
     placement: "facebook_instagram",
@@ -52,11 +55,15 @@ export function defaultSegmentation(): AdSetSegmentation {
 export function parseSegmentationFromBody(body: Record<string, unknown>): AdSetSegmentation {
   const def = defaultSegmentation();
   const countries = Array.isArray(body.countries)
-    ? body.countries.map(String).filter(Boolean)
+    ? body.countries.map((c) => String(c).toUpperCase()).filter(isValidCountryCode)
     : def.countries;
 
+  if (countries.length === 0) {
+    throw new Error("Seleccioná al menos un país para la segmentación");
+  }
+
   return {
-    countries: countries.length ? countries : def.countries,
+    countries,
     ageMin: Number(body.ageMin) || def.ageMin,
     ageMax: Number(body.ageMax) || def.ageMax,
     placement: (body.placement as AdSetSegmentation["placement"]) || def.placement,
@@ -64,6 +71,10 @@ export function parseSegmentationFromBody(body: Record<string, unknown>): AdSetS
     pixelEvent: body.pixelEvent ? String(body.pixelEvent) : def.pixelEvent,
     pageId: body.pageId ? String(body.pageId) : undefined,
   };
+}
+
+export function parseBudgetLevel(body: Record<string, unknown>): BudgetLevel {
+  return body.budgetLevel === "campaign" ? "campaign" : "adset";
 }
 
 export function needsPixel(objective: string): boolean {
@@ -75,5 +86,18 @@ export function needsPage(objective: string): boolean {
     objective === "OUTCOME_LEADS" ||
     objective === "OUTCOME_ENGAGEMENT" ||
     objective === "OUTCOME_SALES"
+  );
+}
+
+export function campaignHasBudget(campaign?: {
+  daily_budget?: string;
+  lifetime_budget?: string;
+}): boolean {
+  return Boolean(
+    campaign?.daily_budget &&
+      parseInt(campaign.daily_budget, 10) > 0
+  ) || Boolean(
+    campaign?.lifetime_budget &&
+      parseInt(campaign.lifetime_budget, 10) > 0
   );
 }

@@ -6,6 +6,7 @@ import type { ClientConfig } from "@/lib/clients";
 import { clientCssVars } from "@/lib/format";
 import { AdminLoginGate } from "./AdminLoginGate";
 import { AppHeader } from "./AppHeader";
+import { MetaAssetPicker } from "./MetaAssetPicker";
 import { WidgetEditor } from "./WidgetEditor";
 import type { WidgetConfig } from "@/lib/widgets";
 
@@ -14,6 +15,7 @@ interface SettingsData {
   settings: {
     configured: boolean;
     metaAdAccountId: string;
+    metaPageId: string;
     metaAccessTokenSet: boolean;
     metaAccessTokenHint: string | null;
     dashboardPasswordSet: boolean;
@@ -26,14 +28,16 @@ interface SettingsData {
 
 interface SettingsPageProps {
   client: ClientConfig;
+  availableClients?: Pick<ClientConfig, "id" | "name">[];
 }
 
-export function SettingsPage({ client }: SettingsPageProps) {
+export function SettingsPage({ client, availableClients = [] }: SettingsPageProps) {
   const [authenticated, setAuthenticated] = useState(false);
   const [checking, setChecking] = useState(true);
   const [data, setData] = useState<SettingsData | null>(null);
   const [metaAccessToken, setMetaAccessToken] = useState("");
   const [metaAdAccountId, setMetaAdAccountId] = useState("");
+  const [metaPageId, setMetaPageId] = useState("");
   const [dashboardPassword, setDashboardPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -41,23 +45,48 @@ export function SettingsPage({ client }: SettingsPageProps) {
   const style = clientCssVars(client);
 
   const loadSettings = useCallback(async () => {
-    const res = await fetch("/api/settings");
-    if (res.status === 401) {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.status === 401) {
+        setAuthenticated(false);
+        return;
+      }
+      const json = await res.json();
+      if (res.ok) {
+        setData(json);
+        setMetaAdAccountId(json.settings.metaAdAccountId || "");
+        setMetaPageId(json.settings.metaPageId || "");
+        setAuthenticated(true);
+      }
+    } catch {
       setAuthenticated(false);
+    } finally {
       setChecking(false);
-      return;
     }
-    const json = await res.json();
-    if (res.ok) {
-      setData(json);
-      setMetaAdAccountId(json.settings.metaAdAccountId || "");
-      setAuthenticated(true);
-    }
-    setChecking(false);
   }, []);
 
   useEffect(() => {
-    loadSettings();
+    let cancelled = false;
+    fetch("/api/admin-auth")
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          setAuthenticated(true);
+          loadSettings();
+        } else {
+          setAuthenticated(false);
+          setChecking(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthenticated(false);
+          setChecking(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [loadSettings]);
 
   async function handleSave(e: React.FormEvent) {
@@ -67,6 +96,7 @@ export function SettingsPage({ client }: SettingsPageProps) {
 
     const payload: Record<string, string | null> = {
       metaAdAccountId,
+      metaPageId,
       dashboardPassword: dashboardPassword || null,
     };
 
@@ -122,7 +152,17 @@ export function SettingsPage({ client }: SettingsPageProps) {
 
   return (
     <div className="min-h-screen" style={style}>
-      <AppHeader client={client} active="settings" />
+      <AppHeader
+        client={client}
+        active="settings"
+        campaignsEnabled={
+          data?.settings.widgetConfig
+            ? data.settings.widgetConfig.features?.campaignsEnabled !== false
+            : true
+        }
+        availableClients={availableClients}
+        isAdmin
+      />
 
       <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         {!s?.supabaseReady && (
@@ -156,7 +196,9 @@ export function SettingsPage({ client }: SettingsPageProps) {
               Token de Meta (access token)
             </label>
             <p className="mt-0.5 text-xs text-gray-400">
-              Permiso <code>ads_read</code>. Dejá vacío para mantener el actual.
+              Permisos <code>ads_read</code> + <code>ads_management</code>.
+              Pegá solo el token (empieza con EAA…), sin comillas ni espacios.
+              Dejá vacío para mantener el actual.
             </p>
             <input
               type="password"
@@ -173,19 +215,21 @@ export function SettingsPage({ client }: SettingsPageProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700">
-              Ad Account ID
+              Cuenta y página de Meta
             </label>
             <p className="mt-0.5 text-xs text-gray-400">
-              Formato <code>act_123456789</code> (Administrador de anuncios → Configuración)
+              Se cargan desde tu token. Elegí en el listado — no hace falta copiar IDs.
             </p>
-            <input
-              type="text"
-              value={metaAdAccountId}
-              onChange={(e) => setMetaAdAccountId(e.target.value)}
-              placeholder="act_123456789"
-              className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-[var(--client-primary)]"
-              required
-            />
+            <div className="mt-2">
+              <MetaAssetPicker
+                token={metaAccessToken}
+                adAccountId={metaAdAccountId}
+                onAdAccountIdChange={setMetaAdAccountId}
+                pageId={metaPageId}
+                onPageIdChange={setMetaPageId}
+                disabled={saving}
+              />
+            </div>
           </div>
 
           <div>

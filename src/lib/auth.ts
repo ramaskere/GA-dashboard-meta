@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { resolveClientIdFromRequest } from "./clients";
 import { getDashboardPassword } from "./settings";
 
 export function getAdminPassword(): string | null {
@@ -7,7 +8,8 @@ export function getAdminPassword(): string | null {
 }
 
 export async function isDashboardAuthed(request: NextRequest): Promise<boolean> {
-  const password = await getDashboardPassword();
+  const clientId = resolveClientIdFromRequest(request);
+  const password = await getDashboardPassword(clientId);
   if (!password) return true;
 
   const cookie = request.cookies.get("dashboard_auth")?.value;

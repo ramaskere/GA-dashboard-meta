@@ -1,10 +1,16 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
 import type { ClientConfig } from "@/lib/clients";
+import { ClientSwitcher } from "./ClientSwitcher";
 
 interface AppHeaderProps {
   client: ClientConfig;
   active: "dashboard" | "campaigns" | "settings";
+  campaignsEnabled?: boolean;
+  availableClients?: Pick<ClientConfig, "id" | "name">[];
+  isAdmin?: boolean;
   children?: React.ReactNode;
 }
 
@@ -14,7 +20,18 @@ const NAV = [
   { href: "/settings", id: "settings" as const, label: "Config" },
 ];
 
-export function AppHeader({ client, active, children }: AppHeaderProps) {
+export function AppHeader({
+  client,
+  active,
+  campaignsEnabled = true,
+  availableClients = [],
+  isAdmin = false,
+  children,
+}: AppHeaderProps) {
+  const navItems = NAV.filter(
+    (item) => item.id !== "campaigns" || campaignsEnabled
+  );
+
   return (
     <header className="border-b border-gray-200/80 bg-white/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
@@ -33,8 +50,13 @@ export function AppHeader({ client, active, children }: AppHeaderProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <ClientSwitcher
+            clients={availableClients}
+            currentId={client.id}
+            isAdmin={isAdmin}
+          />
           <nav className="flex rounded-xl border border-gray-200 bg-white p-1">
-            {NAV.map((item) => (
+            {navItems.map((item) => (
               <Link
                 key={item.id}
                 href={item.href}

@@ -1,3 +1,7 @@
+import type { NextRequest } from "next/server";
+import goApple from "../../clients/go-apple.json";
+import ejemplo from "../../clients/ejemplo.json";
+
 export interface ClientConfig {
   id: string;
   name: string;
@@ -8,16 +12,32 @@ export interface ClientConfig {
   currency: string;
   locale: string;
   timezone: string;
+  defaultCountries?: string[];
 }
-
-import goApple from "../../clients/go-apple.json";
 
 const CLIENTS: Record<string, ClientConfig> = {
   "go-apple": goApple as ClientConfig,
+  ejemplo: ejemplo as ClientConfig,
 };
+
+export const CLIENT_COOKIE = "dashboard_client_id";
 
 export function getClientId(): string {
   return process.env.CLIENT_ID || "go-apple";
+}
+
+export function resolveClientId(
+  cookieValue?: string | null,
+  fallback?: string
+): string {
+  if (cookieValue && CLIENTS[cookieValue]) return cookieValue;
+  const envId = fallback || getClientId();
+  if (CLIENTS[envId]) return envId;
+  return "go-apple";
+}
+
+export function resolveClientIdFromRequest(request: NextRequest): string {
+  return resolveClientId(request.cookies.get(CLIENT_COOKIE)?.value);
 }
 
 export function getClientConfig(clientId?: string): ClientConfig {
@@ -31,4 +51,8 @@ export function getClientConfig(clientId?: string): ClientConfig {
 
 export function listClients(): ClientConfig[] {
   return Object.values(CLIENTS);
+}
+
+export function hasMultipleClients(): boolean {
+  return Object.keys(CLIENTS).length > 1;
 }

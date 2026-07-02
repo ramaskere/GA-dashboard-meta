@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/auth";
-import { getPublicSettings, getMetaCredentials } from "@/lib/settings";
-import { parseSegmentationFromBody } from "@/lib/adset-segmentation";
+import { getPublicSettings, getMetaCredentials, getDefaultPageId } from "@/lib/settings";
+import {
+  parseSegmentationFromBody,
+  parseBudgetLevel,
+  campaignHasBudget,
+} from "@/lib/adset-segmentation";
 import {
   listCampaigns,
   listAdSets,
@@ -11,8 +15,9 @@ import {
   getAdAccountPages,
   listPixels,
   CAMPAIGN_OBJECTIVES,
-  SUGGESTED_MIN_DAILY_BUDGET_ARS,
+  SUGGESTED_MIN_DAILY_BUDGET,
 } from "@/lib/meta-manage";
+import { fetchAdAccountInfo } from "@/lib/meta-api";
 
 export async function GET() {
   try {
@@ -25,12 +30,14 @@ export async function GET() {
     }
 
     const { token, adAccountId } = await getMetaCredentials();
-    const [campaigns, adSets, ads, pages, pixels] = await Promise.all([
+    const defaultPageId = await getDefaultPageId();
+    const [campaigns, adSets, ads, pages, pixels, account] = await Promise.all([
       listCampaigns(adAccountId, token),
       listAdSets(adAccountId, token),
       listAds(adAccountId, token),
       getAdAccountPages(adAccountId, token).catch(() => []),
       listPixels(adAccountId, token).catch(() => []),
+      fetchAdAccountInfo(adAccountId, token),
     ]);
 
     return NextResponse.json({
@@ -40,7 +47,10 @@ export async function GET() {
       pages,
       pixels,
       objectives: CAMPAIGN_OBJECTIVES,
-      suggestedMinDailyBudgetArs: SUGGESTED_MIN_DAILY_BUDGET_ARS,
+      accountCurrency: account.currency,
+      adAccountId,
+      suggestedMinDailyBudget: SUGGESTED_MIN_DAILY_BUDGET,
+      defaultPageId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";
@@ -63,7 +73,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { token, adAccountId } = await getMetaCredentials();
     const action = String(body.action || "");
-    const segmentation = parseSegmentationFromBody(body);
+    const budgetLevel = parseBudgetLevel(body);
+    const dailyBudget = Number(body.dailyBudget) || 0;
 
     if (action === "create_campaign") {
       const name = String(body.name || "").trim();
@@ -74,20 +85,26 @@ export async function POST(request: NextRequest) {
       const campaign = await createCampaign(adAccountId, token, {
         name,
         objective: String(body.objective || "OUTCOME_TRAFFIC"),
+        dailyBudget:
+          budgetLevel === "campaign" && dailyBudget > 0
+            ? dailyBudget
+            : undefined,
         status: "PAUSED",
       });
 
       return NextResponse.json({
         ok: true,
         campaignId: campaign.id,
-        message: `Campaña "${name}" creada en pausa.`,
+        message: `Campaña "${name}" creada en pausa${
+          budgetLevel === "campaign" && dailyBudget > 0 ? " con presupuesto CBO" : ""
+        }.`,
       });
     }
 
     if (action === "create_adset") {
       const name = String(body.name || "").trim();
       const campaignId = String(body.campaignId || "").trim();
-      const dailyBudget = Number(body.dailyBudget);
+      const segmentation = parseSegmentationFromBody(body);
 
       if (!name || !campaignId) {
         return NextResponse.json(
@@ -96,10 +113,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const campaigns = await listCampaigns(adAccountId, token);
+      const parent = campaigns.find((c) => c.id === campaignId);
+      const useCbo = campaignHasBudget(parent);
+
       const adSet = await createAdSet(adAccountId, token, {
         name,
         campaignId,
-        dailyBudget,
+        dailyBudget:
+          !useCbo && budgetLevel === "adset" && dailyBudget > 0
+            ? dailyBudget
+            : undefined,
         segmentation,
       });
 
@@ -114,11 +138,25 @@ export async function POST(request: NextRequest) {
       const campName = String(body.campaignName || "").trim();
       const adSetName = String(body.adSetName || "").trim();
       const objective = String(body.objective || "OUTCOME_TRAFFIC");
-      const dailyBudget = Number(body.dailyBudget);
+      const segmentation = parseSegmentationFromBody(body);
 
-      if (!campName || !adSetName || !dailyBudget) {
+      if (!campName || !adSetName) {
         return NextResponse.json(
-          { error: "Completá nombre de campaña, ad set y presupuesto" },
+          { error: "Completá nombre de campaña y ad set" },
+          { status: 400 }
+        );
+      }
+
+      if (budgetLevel === "campaign" && dailyBudget <= 0) {
+        return NextResponse.json(
+          { error: "Con presupuesto en campaña, indicá el monto diario" },
+          { status: 400 }
+        );
+      }
+
+      if (budgetLevel === "adset" && dailyBudget <= 0) {
+        return NextResponse.json(
+          { error: "Con presupuesto en ad set, indicá el monto diario" },
           { status: 400 }
         );
       }
@@ -126,13 +164,15 @@ export async function POST(request: NextRequest) {
       const campaign = await createCampaign(adAccountId, token, {
         name: campName,
         objective,
+        dailyBudget:
+          budgetLevel === "campaign" ? dailyBudget : undefined,
         status: "PAUSED",
       });
 
       const adSet = await createAdSet(adAccountId, token, {
         name: adSetName,
         campaignId: campaign.id,
-        dailyBudget,
+        dailyBudget: budgetLevel === "adset" ? dailyBudget : undefined,
         objective,
         segmentation,
       });
