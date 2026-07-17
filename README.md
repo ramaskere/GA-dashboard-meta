@@ -72,3 +72,4 @@ Repo: [github.com/ramaskere/GA-dashboard-meta](https://github.com/ramaskere/GA-d
 
 - **PDF / imprimir:** abrí `/docs/SOP-configuracion-clientes.html` en el navegador → botón *Guardar como PDF*
 - **Markdown (repo):** `docs/SOP-configuracion-clientes.md`
+- **Agregar cliente desde la web:** `/settings` → sección **Clientes** (después de ejecutar `supabase/migration_clients.sql`)

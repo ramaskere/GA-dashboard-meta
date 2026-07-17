@@ -1,11 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import {
-  getClientConfig,
-  listClients,
-  resolveClientId,
-  CLIENT_COOKIE,
-} from "@/lib/clients";
+import { resolveClientId, CLIENT_COOKIE } from "@/lib/clients";
+import { listAllClients, resolveClientConfig } from "@/lib/client-registry";
 import { getPublicSettings } from "@/lib/settings";
 import { campaignsEnabled } from "@/lib/widgets";
 import { CampaignsPage } from "@/components/CampaignsPage";
@@ -19,8 +15,10 @@ export default async function Campaigns() {
     redirect("/");
   }
 
-  const client = getClientConfig(clientId);
-  return (
-    <CampaignsPage client={client} availableClients={listClients()} />
-  );
+  const [client, availableClients] = await Promise.all([
+    resolveClientConfig(clientId),
+    listAllClients(),
+  ]);
+
+  return <CampaignsPage client={client} availableClients={availableClients} />;
 }

@@ -1,18 +1,15 @@
 import { cookies } from "next/headers";
-import {
-  getClientConfig,
-  listClients,
-  resolveClientId,
-  CLIENT_COOKIE,
-} from "@/lib/clients";
+import { resolveClientId, CLIENT_COOKIE } from "@/lib/clients";
+import { listAllClients, resolveClientConfig } from "@/lib/client-registry";
 import { Dashboard } from "@/components/Dashboard";
 
 export default async function Home() {
   const cookieStore = await cookies();
   const clientId = resolveClientId(cookieStore.get(CLIENT_COOKIE)?.value);
-  const client = getClientConfig(clientId);
+  const [client, availableClients] = await Promise.all([
+    resolveClientConfig(clientId),
+    listAllClients(),
+  ]);
 
-  return (
-    <Dashboard client={client} availableClients={listClients()} />
-  );
+  return <Dashboard client={client} availableClients={availableClients} />;
 }

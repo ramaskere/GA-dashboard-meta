@@ -1,18 +1,15 @@
 import { cookies } from "next/headers";
-import {
-  getClientConfig,
-  listClients,
-  resolveClientId,
-  CLIENT_COOKIE,
-} from "@/lib/clients";
+import { resolveClientId, CLIENT_COOKIE } from "@/lib/clients";
+import { listAllClients, resolveClientConfig } from "@/lib/client-registry";
 import { SettingsPage } from "@/components/SettingsPage";
 
 export default async function Settings() {
   const cookieStore = await cookies();
   const clientId = resolveClientId(cookieStore.get(CLIENT_COOKIE)?.value);
-  const client = getClientConfig(clientId);
+  const [client, availableClients] = await Promise.all([
+    resolveClientConfig(clientId),
+    listAllClients(),
+  ]);
 
-  return (
-    <SettingsPage client={client} availableClients={listClients()} />
-  );
+  return <SettingsPage client={client} availableClients={availableClients} />;
 }

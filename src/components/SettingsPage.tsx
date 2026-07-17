@@ -8,6 +8,7 @@ import { AdminLoginGate } from "./AdminLoginGate";
 import { AppHeader } from "./AppHeader";
 import { MetaAssetPicker } from "./MetaAssetPicker";
 import { WidgetEditor } from "./WidgetEditor";
+import { AddClientPanel } from "./AddClientPanel";
 import type { WidgetConfig } from "@/lib/widgets";
 
 interface SettingsData {
@@ -190,7 +191,21 @@ export function SettingsPage({ client, availableClients = [] }: SettingsPageProp
           </div>
         )}
 
-        <form onSubmit={handleSave} className="space-y-5 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50/80 px-4 py-3 text-sm text-blue-900">
+          Estás configurando: <strong>{client.name}</strong>
+          <span className="ml-1 text-blue-700">({client.id})</span>
+          . Cambiá de cliente con el selector del header o creá uno abajo.
+        </div>
+
+        <AddClientPanel
+          currentClientId={client.id}
+          supabaseReady={Boolean(s?.supabaseReady)}
+        />
+
+        <form onSubmit={handleSave} className="mt-8 space-y-5 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-[#1d1d1f]">
+            API de Meta — {client.name}
+          </h2>
           <div>
             <label className="block text-sm font-medium text-gray-700">
               Token de Meta (access token)
